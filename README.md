@@ -60,6 +60,7 @@
 - [API 명세서](docs/API.md)
 - [ERD 다이어그램](docs/erd.svg)
 - [인프라 구성도](docs/concert_reserv_infra.png)
+- [시퀀스 다이어그램](docs/sequence diagram.png)
 ---
 ## 프로젝트
 
