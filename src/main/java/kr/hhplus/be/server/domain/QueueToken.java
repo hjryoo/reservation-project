@@ -105,11 +105,11 @@ public class QueueToken {
         return activatedAt;
     }
 
-    void setId(Long id) {
+    public void setId(Long id) {
         this.id = id;
     }
 
-    void updatePosition(Long newPosition) {
+    public void updatePosition(Long newPosition) {
         this.position = newPosition;
     }
 }
