@@ -1,13 +1,13 @@
-package kr.hhplus.be.server.domain.entity;
+package kr.hhplus.be.server.infrastructure.persistence.entity;
 
 import jakarta.persistence.*;
+import kr.hhplus.be.server.domain.model.ConcertStatus;
+
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Entity
 @Table(name = "concerts")
-public class Concert {
-
+public class ConcertEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -40,47 +40,37 @@ public class Concert {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
-    protected Concert() {}
+    // JPA용 기본 생성자
+    protected ConcertEntity() {}
 
-    private Concert(String title, String artist, LocalDateTime concertDate,
-                    Integer totalSeats, Integer price) {
-        this.title = title;
-        this.artist = artist;
-        this.concertDate = concertDate;
-        this.totalSeats = totalSeats;
-        this.availableSeats = totalSeats;
-        this.price = price;
-        this.status = ConcertStatus.AVAILABLE;
-        this.createdAt = LocalDateTime.now();
-        this.updatedAt = LocalDateTime.now();
-    }
-
-    public static Concert create(String title, String artist,
-                                 LocalDateTime concertDate, Integer totalSeats,
-                                 Integer price) {
-        return new Concert(title, artist, concertDate, totalSeats, price);
-    }
-
-    public boolean isBookingAvailable() {
-        return status == ConcertStatus.AVAILABLE &&
-                availableSeats > 0 &&
-                concertDate.isAfter(LocalDateTime.now());
-    }
-
-    public void updateStatus(ConcertStatus status) {
-        this.status = status;
-        this.updatedAt = LocalDateTime.now();
-    }
-
-    // Getters
+    // Getters and Setters
     public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
     public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+
     public String getArtist() { return artist; }
+    public void setArtist(String artist) { this.artist = artist; }
+
     public LocalDateTime getConcertDate() { return concertDate; }
+    public void setConcertDate(LocalDateTime concertDate) { this.concertDate = concertDate; }
+
     public Integer getTotalSeats() { return totalSeats; }
+    public void setTotalSeats(Integer totalSeats) { this.totalSeats = totalSeats; }
+
     public Integer getAvailableSeats() { return availableSeats; }
+    public void setAvailableSeats(Integer availableSeats) { this.availableSeats = availableSeats; }
+
     public Integer getPrice() { return price; }
+    public void setPrice(Integer price) { this.price = price; }
+
     public ConcertStatus getStatus() { return status; }
+    public void setStatus(ConcertStatus status) { this.status = status; }
+
     public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
     public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

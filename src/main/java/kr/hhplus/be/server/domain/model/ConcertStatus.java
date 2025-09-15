@@ -1,4 +1,4 @@
-package kr.hhplus.be.server.domain.entity;
+package kr.hhplus.be.server.domain.model;
 
 public enum ConcertStatus {
     AVAILABLE,      // 예약 가능
