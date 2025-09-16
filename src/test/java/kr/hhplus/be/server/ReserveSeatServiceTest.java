@@ -1,5 +1,6 @@
-package kr.hhplus.be.server.application;
+package kr.hhplus.be.server;
 
+import kr.hhplus.be.server.application.ReserveSeatService;
 import kr.hhplus.be.server.domain.model.Reservation;
 import kr.hhplus.be.server.domain.model.Seat;
 import kr.hhplus.be.server.domain.port.in.ReserveSeatUseCase.ReserveSeatCommand;

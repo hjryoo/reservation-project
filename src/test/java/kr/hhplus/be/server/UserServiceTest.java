@@ -1,5 +1,6 @@
-package kr.hhplus.be.server.application;
+package kr.hhplus.be.server;
 
+import kr.hhplus.be.server.application.UserService;
 import kr.hhplus.be.server.domain.model.User;
 import kr.hhplus.be.server.domain.port.out.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,7 +13,6 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class UserServiceTest {
