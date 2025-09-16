@@ -1,5 +1,6 @@
-package kr.hhplus.be.server.application;
+package kr.hhplus.be.server;
 
+import kr.hhplus.be.server.application.ProcessPaymentService;
 import kr.hhplus.be.server.domain.model.*;
 import kr.hhplus.be.server.domain.port.in.ProcessPaymentUseCase.ProcessPaymentCommand;
 import kr.hhplus.be.server.domain.port.out.*;

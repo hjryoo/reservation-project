@@ -1,5 +1,6 @@
-package kr.hhplus.be.server.application.service;
+package kr.hhplus.be.server;
 
+import kr.hhplus.be.server.application.service.PointService;
 import kr.hhplus.be.server.domain.entity.Point;
 import kr.hhplus.be.server.domain.entity.PointHistory;
 import kr.hhplus.be.server.domain.repository.PointRepository;
