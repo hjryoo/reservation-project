@@ -28,7 +28,10 @@ public class ConcertEntity {
     private Integer availableSeats;
 
     @Column(nullable = false)
-    private Integer price;
+    private String venue;
+
+    @Column(nullable = false)
+    private Long price;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -40,8 +43,18 @@ public class ConcertEntity {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
+    @Column(name = "start_time", nullable = false)
+    private LocalDateTime startTime;
+
+    @Column(name = "end_time", nullable = false)
+    private LocalDateTime endTime;
+
+
     // JPA용 기본 생성자
     protected ConcertEntity() {}
+    public enum ConcertStatus {
+        SCHEDULED, AVAILABLE, SOLD_OUT, CANCELLED, COMPLETED
+    }
 
     // Getters and Setters
     public Long getId() { return id; }
@@ -53,24 +66,27 @@ public class ConcertEntity {
     public String getArtist() { return artist; }
     public void setArtist(String artist) { this.artist = artist; }
 
+    public String getVenue() { return venue; }
+    public void setVenue(String venue) { this.venue = venue; }
+
     public LocalDateTime getConcertDate() { return concertDate; }
     public void setConcertDate(LocalDateTime concertDate) { this.concertDate = concertDate; }
 
-    public Integer getTotalSeats() { return totalSeats; }
-    public void setTotalSeats(Integer totalSeats) { this.totalSeats = totalSeats; }
+    public LocalDateTime getStartTime() { return startTime; }
+    public void setStartTime(LocalDateTime startTime) { this.startTime = startTime; }
 
-    public Integer getAvailableSeats() { return availableSeats; }
-    public void setAvailableSeats(Integer availableSeats) { this.availableSeats = availableSeats; }
+    public LocalDateTime getEndTime() { return endTime; }
+    public void setEndTime(LocalDateTime endTime) { this.endTime = endTime; }
 
-    public Integer getPrice() { return price; }
-    public void setPrice(Integer price) { this.price = price; }
+    public int getTotalSeats() { return totalSeats; }
+    public void setTotalSeats(int totalSeats) { this.totalSeats = totalSeats; }
+
+    public int getAvailableSeats() { return availableSeats; }
+    public void setAvailableSeats(int availableSeats) { this.availableSeats = availableSeats; }
+
+    public Long getPrice() { return price; }
+    public void setPrice(Long price) { this.price = price; }
 
     public ConcertStatus getStatus() { return status; }
     public void setStatus(ConcertStatus status) { this.status = status; }
-
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }
