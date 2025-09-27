@@ -105,7 +105,7 @@ public class PaymentRepositoryImpl implements PaymentRepository {
 
 
     private PaymentEntity toEntity(Payment domain) {
-        return new PaymentEntity(
+        PaymentEntity entity = new PaymentEntity(
                 domain.getReservationId(),
                 domain.getUserId(),
                 domain.getAmount(),
@@ -116,14 +116,20 @@ public class PaymentRepositoryImpl implements PaymentRepository {
                 domain.getFailureReason(),
                 domain.getPaidAt()
         );
+
+        // 기존 ID가 있는 경우 (업데이트)
+        if (domain.getId() != null) {
+            entity.setId(domain.getId());
+        }
+
+        return entity;
     }
 
     private Payment toDomain(PaymentEntity entity) {
-        // 엔티티의 상태에 따라 적절한 도메인 객체 생성
         Payment domain;
 
+        // 상태에 따른 도메인 객체 생성
         if (entity.getReservationId() != null) {
-            // 예약 ID가 있는 경우
             domain = Payment.createWithReservation(
                     entity.getReservationId(),
                     entity.getUserId(),
@@ -132,7 +138,6 @@ public class PaymentRepositoryImpl implements PaymentRepository {
                     entity.getIdempotencyKey()
             );
         } else {
-            // 예약 ID가 없는 경우
             domain = Payment.createPending(
                     entity.getUserId(),
                     entity.getAmount(),
@@ -141,8 +146,13 @@ public class PaymentRepositoryImpl implements PaymentRepository {
             );
         }
 
-        // ID 할당
-        domain = domain.withId(entity.getId());
+        // 🔥 개선된 기술적 필드 할당 (Reflection 없음)
+        domain.assignTechnicalFields(
+                entity.getId(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt(),
+                entity.getVersion()
+        );
 
         // 상태에 따른 변환
         if (entity.getStatus() == PaymentStatus.COMPLETED && entity.getTransactionId() != null) {
