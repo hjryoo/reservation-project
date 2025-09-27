@@ -21,7 +21,6 @@ public class SeatReservationService {
     /**
      * 좌석 상태 전환: 예약 가능 → 임시 예약
      */
-    @Transactional
     public SeatReservation reserveSeatTemporarily(Long concertId, Integer seatNumber, Long userId) {
         // 1. 기존 좌석 조회 (FOR UPDATE로 비관적 락)
         Optional<SeatReservation> existingSeat = seatReservationRepository
