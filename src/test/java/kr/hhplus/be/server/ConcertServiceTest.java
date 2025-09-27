@@ -1,7 +1,8 @@
-package kr.hhplus.be.server.application.service;
+package kr.hhplus.be.server;
 
-import kr.hhplus.be.server.domain.entity.Concert;
-import kr.hhplus.be.server.domain.entity.ConcertStatus;
+import kr.hhplus.be.server.application.service.ConcertService;
+import kr.hhplus.be.server.domain.model.Concert;
+import kr.hhplus.be.server.domain.model.ConcertStatus;
 import kr.hhplus.be.server.domain.repository.ConcertRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
