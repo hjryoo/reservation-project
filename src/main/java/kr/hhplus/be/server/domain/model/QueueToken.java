@@ -5,43 +5,60 @@ import java.util.UUID;
 
 public class QueueToken {
     private Long id;
+    private Integer position;
+
     private final String tokenValue;
     private final Long userId;
     private final Long concertId;
     private final QueueStatus status;
     private final LocalDateTime createdAt;
     private final LocalDateTime expiresAt;
-    private final Integer position;
     private final LocalDateTime enteredAt;
 
     private QueueToken(String tokenValue, Long userId, Long concertId,
                        QueueStatus status, LocalDateTime createdAt,
-                       LocalDateTime expiresAt, Integer position,
-                       LocalDateTime enteredAt) {
+                       LocalDateTime expiresAt, LocalDateTime enteredAt) {
         this.tokenValue = tokenValue;
         this.userId = userId;
         this.concertId = concertId;
         this.status = status;
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
-        this.position = position;
         this.enteredAt = enteredAt;
     }
 
-    // 팩토리 메서드 - 새 대기열 토큰 생성
+
     public static QueueToken createWaitingToken(Long userId, Long concertId) {
         return new QueueToken(
                 UUID.randomUUID().toString(),
-                userId,
-                concertId,
+                userId, concertId,
                 QueueStatus.WAITING,
                 LocalDateTime.now(),
-                LocalDateTime.now().plusHours(1), // 1시간 후 만료
-                null, // position은 별도로 설정
+                LocalDateTime.now().plusHours(1),
                 null
         );
     }
 
+    public static QueueToken createWithStatus(String tokenValue, Long userId, Long concertId,
+                                              QueueStatus status, LocalDateTime createdAt,
+                                              LocalDateTime expiresAt, LocalDateTime enteredAt) {
+        return new QueueToken(tokenValue, userId, concertId, status, createdAt, expiresAt, enteredAt);
+    }
+
+    public void assignId(Long id) {
+        this.id = id;
+    }
+
+    public void assignPosition(Integer position) {
+        this.position = position;
+    }
+
+    public void assignTechnicalFields(Long id, Integer position) {
+        this.id = id;
+        this.position = position;
+    }
+
+    
     // 대기열 진입 (ACTIVE 상태로 변경)
     public QueueToken activate() {
         if (status != QueueStatus.WAITING) {
@@ -100,15 +117,6 @@ public class QueueToken {
     // 비즈니스 로직 - 활성 상태 여부
     public boolean isActive() {
         return status == QueueStatus.ACTIVE && !isExpired();
-    }
-
-    // ID 할당 (Infrastructure 레이어에서만 사용)
-    public void assignId(Long id) {
-        this.id = id;
-    }
-
-    public void assignPosition(Integer position) {
-        // position 업데이트 로직
     }
 
     // Getters

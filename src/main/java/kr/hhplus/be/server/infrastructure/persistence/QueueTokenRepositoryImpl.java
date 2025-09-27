@@ -134,7 +134,6 @@ public class QueueTokenRepositoryImpl implements QueueTokenRepository {
                 domain.getEnteredAt()
         );
 
-        // ID가 있는 경우 (업데이트)
         if (domain.getId() != null) {
             entity.setId(domain.getId());
         }
@@ -143,14 +142,60 @@ public class QueueTokenRepositoryImpl implements QueueTokenRepository {
     }
 
     private QueueToken toDomain(QueueTokenEntity entity) {
-        QueueToken domain = QueueToken.createWaitingToken(
-                entity.getUserId(),
-                entity.getConcertId()
-        );
+        QueueToken domain;
 
-        // ID 할당 (리플렉션 또는 별도 메서드 사용)
-        domain.assignId(entity.getId());
-        domain.assignPosition(entity.getPosition());
+        // Entity의 상태에 따라 적절한 도메인 객체 생성
+        switch (entity.getStatus()) {
+            case WAITING:
+                // WAITING 상태는 기존 팩토리 메서드 사용
+                domain = QueueToken.createWaitingToken(
+                        entity.getUserId(),
+                        entity.getConcertId()
+                );
+                break;
+
+            case ACTIVE:
+                // ACTIVE 상태는 범용 팩토리 메서드로 생성 후 변환
+                domain = QueueToken.createWithStatus(
+                        entity.getTokenValue(),
+                        entity.getUserId(),
+                        entity.getConcertId(),
+                        QueueStatus.ACTIVE,
+                        entity.getCreatedAt(),
+                        entity.getExpiresAt(),
+                        entity.getEnteredAt()
+                );
+                break;
+
+            case EXPIRED:
+                domain = QueueToken.createWithStatus(
+                        entity.getTokenValue(),
+                        entity.getUserId(),
+                        entity.getConcertId(),
+                        QueueStatus.EXPIRED,
+                        entity.getCreatedAt(),
+                        entity.getExpiresAt(),
+                        entity.getEnteredAt()
+                );
+                break;
+
+            case COMPLETED:
+                domain = QueueToken.createWithStatus(
+                        entity.getTokenValue(),
+                        entity.getUserId(),
+                        entity.getConcertId(),
+                        QueueStatus.COMPLETED,
+                        entity.getCreatedAt(),
+                        entity.getExpiresAt(),
+                        entity.getEnteredAt()
+                );
+                break;
+
+            default:
+                throw new IllegalArgumentException("지원하지 않는 토큰 상태: " + entity.getStatus());
+        }
+
+        domain.assignTechnicalFields(entity.getId(), entity.getPosition());
 
         return domain;
     }
