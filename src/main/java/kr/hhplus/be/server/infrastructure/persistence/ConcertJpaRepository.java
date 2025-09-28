@@ -1,11 +1,13 @@
 package kr.hhplus.be.server.infrastructure.persistence;
 
-import kr.hhplus.be.server.domain.model.Concert;
 import kr.hhplus.be.server.domain.model.ConcertDate;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
+import kr.hhplus.be.server.domain.model.ConcertDate.ConcertDateStatus;
+import kr.hhplus.be.server.domain.repository.ConcertDateRepository;
+import kr.hhplus.be.server.infrastructure.persistence.entity.ConcertDateEntity;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -13,15 +15,60 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-@Repository
-public class ConcertJpaRepository implements ConcertRepository {
-    private final SpringDataConcertRepository concertRepo;
+@Repository("legacyConcertDateRepository")
+@Transactional(readOnly = true)
+public class ConcertJpaRepository implements ConcertDateRepository {
+
     private final SpringDataConcertDateRepository concertDateRepo;
 
-    public ConcertJpaRepository(SpringDataConcertRepository concertRepo,
-                                SpringDataConcertDateRepository concertDateRepo) {
-        this.concertRepo = concertRepo;
+    public ConcertJpaRepository(SpringDataConcertDateRepository concertDateRepo) {
         this.concertDateRepo = concertDateRepo;
+    }
+
+    @Override
+    @Transactional
+    public ConcertDate save(ConcertDate concertDate) {
+        ConcertDateEntity entity = toEntity(concertDate);
+        ConcertDateEntity savedEntity = concertDateRepo.save(entity);
+        return toDomain(savedEntity);
+    }
+
+    @Override
+    public List<ConcertDate> saveAll(List<ConcertDate> concertDates) {
+        return List.of();
+    }
+
+    @Override
+    public Optional<ConcertDate> findById(Long id) {
+        return concertDateRepo.findById(id)
+                .map(this::toDomain);
+    }
+
+    @Override
+    public List<ConcertDate> findAll() {
+        return concertDateRepo.findAll()
+                .stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ConcertDate> findAllById(List<Long> ids) {
+        return List.of();
+    }
+
+    @Override
+    public List<ConcertDate> findByConcertId(Long concertId) {
+        return concertDateRepo.findByConcert_Id(concertId)
+                .stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public Optional<ConcertDate> findByConcertIdAndDateTime(Long concertId, LocalDateTime dateTime) {
+        return concertDateRepo.findByConcert_IdAndConcertDateTime(concertId, dateTime)
+                .map(this::toDomain);
     }
 
     @Override
@@ -29,81 +76,192 @@ public class ConcertJpaRepository implements ConcertRepository {
         LocalDateTime startOfMonth = month.atStartOfDay();
         LocalDateTime endOfMonth = month.plusMonths(1).atStartOfDay().minusSeconds(1);
 
+        Pageable pageable = PageRequest.of(0, limit);
         List<ConcertDateEntity> entities = concertDateRepo
-                .findAvailableDatesByDateRangeWithLimit(startOfMonth, endOfMonth, limit);
+                .findAvailableDatesByDateRange(startOfMonth, endOfMonth, pageable);
 
         return entities.stream()
-                .map(this::toConcertDate)
+                .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<ConcertDate> findAllAvailableDates(int limit) {
+        // LIMIT 문제 해결: Pageable 사용
+        Pageable pageable = PageRequest.of(0, limit);
         List<ConcertDateEntity> entities = concertDateRepo
-                .findAvailableDatesWithLimit(LocalDateTime.now(), limit);
+                .findAvailableDates(LocalDateTime.now(), pageable);
 
         return entities.stream()
-                .map(this::toConcertDate)
+                .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
-    public Optional<Concert> findByConcertId(String concertId) {
-        return concertRepo.findById(concertId)
-                .map(this::toConcert);
+    public List<ConcertDate> findByStatus(ConcertDateStatus status) {
+        return concertDateRepo.findByStatus(status)
+                .stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
     }
 
     @Override
-    public Optional<ConcertDate> findConcertDate(String concertId, LocalDateTime concertDateTime) {
-        return concertDateRepo.findByConcertIdAndConcertDateTime(concertId, concertDateTime)
-                .map(this::toConcertDate);
+    public List<ConcertDate> findByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
+        return concertDateRepo.findByConcertDateTimeBetween(startDate, endDate)
+                .stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
     }
 
-    private Concert toConcert(ConcertEntity entity) {
-        List<ConcertDate> concertDates = entity.getConcertDates().stream()
-                .map(this::toConcertDate)
+    @Override
+    public List<ConcertDate> findUpcomingDates(LocalDateTime fromDate, int limit) {
+        Pageable pageable = PageRequest.of(0, limit);
+        return concertDateRepo.findUpcomingDates(fromDate, pageable)
+                .stream()
+                .map(this::toDomain)
                 .collect(Collectors.toList());
+    }
 
-        return Concert.create(
-                entity.getConcertId(),
-                entity.getTitle(),
-                entity.getVenue(),
-                entity.getTotalSeats(),
-                entity.getPrice(),
-                concertDates
+    @Override
+    public int bulkUpdateStatus(ConcertDateStatus newStatus, ConcertDateStatus oldStatus) {
+        return 0;
+    }
+
+    @Override
+    public int bulkUpdateAvailableSeats(Long concertId, int newAvailableSeats) {
+        return 0;
+    }
+
+    @Override
+    @Transactional
+    public void delete(ConcertDate concertDate) {
+        if (concertDate.getId() != null) {
+            concertDateRepo.deleteById(concertDate.getId());
+        }
+    }
+
+    @Override
+    @Transactional
+    public void deleteById(Long id) {
+        concertDateRepo.deleteById(id);
+    }
+
+    @Override
+    public void deleteAll() {
+
+    }
+
+    @Override
+    public void deleteAll(List<ConcertDate> concertDates) {
+
+    }
+
+    @Override
+    public void deleteAllById(List<Long> ids) {
+
+    }
+
+    @Override
+    public boolean existsById(Long id) {
+        return concertDateRepo.existsById(id);
+    }
+
+    @Override
+    public long count() {
+        return concertDateRepo.count();
+    }
+
+    // Entity ↔ Domain 변환 메서드
+    private ConcertDateEntity toEntity(ConcertDate domain) {
+        ConcertDateEntity entity = new ConcertDateEntity(
+                domain.getConcertDateTime(),
+                domain.getStartTime(),
+                domain.getEndTime(),
+                domain.getTotalSeats(),
+                domain.getAvailableSeats(),
+                domain.getStatus()
         );
+
+        if (domain.getId() != null) {
+            entity.setId(domain.getId());
+        }
+
+        return entity;
     }
 
-    private ConcertDate toConcertDate(ConcertDateEntity entity) {
-        return ConcertDate.create(
-                entity.getConcertId(),
+    private ConcertDate toDomain(ConcertDateEntity entity) {
+        ConcertDate domain = ConcertDate.create(
+                entity.getConcertId(), // Long 타입
                 entity.getConcertDateTime(),
                 entity.getStartTime(),
                 entity.getEndTime(),
-                entity.getTotalSeats(),
-                entity.getAvailableSeats()
+                entity.getTotalSeats()
         );
+
+        domain.assignTechnicalFields(
+                entity.getId(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+
+        // 상태 및 좌석 수 복원
+        restoreDomainState(domain, entity);
+
+        return domain;
     }
-}
 
-// Spring Data JPA Repository 인터페이스들
-interface SpringDataConcertRepository extends JpaRepository<ConcertEntity, String> {
-}
+    private void restoreDomainState(ConcertDate domain, ConcertDateEntity entity) {
+        if (entity.getStatus() != ConcertDateStatus.SCHEDULED) {
+            switch (entity.getStatus()) {
+                case AVAILABLE:
+                    if (domain.getStatus() == ConcertDateStatus.SCHEDULED) {
+                        domain.openBooking();
+                    }
+                    break;
+                case CANCELLED:
+                    domain.cancel();
+                    break;
+                case COMPLETED:
+                    domain.complete();
+                    break;
+                case SOLD_OUT:
+                    // availableSeats 조정으로 자동 처리됨
+                    break;
+            }
+        }
 
-interface SpringDataConcertDateRepository extends JpaRepository<ConcertDateEntity, Long> {
+        int currentAvailable = domain.getAvailableSeats();
+        int targetAvailable = entity.getAvailableSeats();
 
-    @Query("SELECT cd FROM ConcertDateEntity cd WHERE cd.concertDateTime >= :startDate AND cd.concertDateTime <= :endDate AND cd.availableSeats > 0 ORDER BY cd.concertDateTime LIMIT :limit")
-    List<ConcertDateEntity> findAvailableDatesByDateRangeWithLimit(
-            @Param("startDate") LocalDateTime startDate,
-            @Param("endDate") LocalDateTime endDate,
-            @Param("limit") int limit
-    );
+        if (targetAvailable < currentAvailable) {
+            for (int i = 0; i < currentAvailable - targetAvailable; i++) {
+                domain.decreaseAvailableSeats();
+            }
+        } else if (targetAvailable > currentAvailable) {
+            for (int i = 0; i < targetAvailable - currentAvailable; i++) {
+                domain.increaseAvailableSeats();
+            }
+        }
+    }
 
-    @Query("SELECT cd FROM ConcertDateEntity cd WHERE cd.concertDateTime > :now AND cd.availableSeats > 0 ORDER BY cd.concertDateTime LIMIT :limit")
-    List<ConcertDateEntity> findAvailableDatesWithLimit(
-            @Param("now") LocalDateTime now,
-            @Param("limit") int limit
-    );
+    @Override
+    @Transactional
+    public void deleteAllInBatch() {
+        concertDateRepo.deleteAllInBatch();
+    }
 
-    Optional<ConcertDateEntity> findByConcertIdAndConcertDateTime(String concertId, LocalDateTime concertDateTime);
+    @Override
+    @Transactional
+    public void deleteAllInBatch(List<ConcertDate> concertDates) {
+        List<ConcertDateEntity> entities = concertDates.stream()
+                .map(this::toEntity)
+                .collect(Collectors.toList());
+        concertDateRepo.deleteAllInBatch(entities);
+    }
+
+    @Override
+    @Transactional
+    public void deleteAllByIdInBatch(List<Long> ids) {
+        concertDateRepo.deleteAllByIdInBatch(ids);
+    }
 }
