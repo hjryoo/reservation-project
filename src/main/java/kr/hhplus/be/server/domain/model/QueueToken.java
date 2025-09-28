@@ -58,37 +58,48 @@ public class QueueToken {
         this.position = position;
     }
 
-    
+
     // 대기열 진입 (ACTIVE 상태로 변경)
     public QueueToken activate() {
         if (status != QueueStatus.WAITING) {
             throw new IllegalStateException("대기 중인 토큰만 활성화할 수 있습니다.");
         }
 
-        return new QueueToken(
+        QueueToken activated = new QueueToken(
                 this.tokenValue,
                 this.userId,
                 this.concertId,
                 QueueStatus.ACTIVE,
                 this.createdAt,
-                LocalDateTime.now().plusMinutes(10), // 10분간 활성
-                this.position,
+                LocalDateTime.now().plusMinutes(10),
                 LocalDateTime.now()
         );
+
+        // 기술적 필드 복사
+        activated.id = this.id;
+        activated.position = this.position;
+
+        return activated;
     }
+
 
     // 토큰 만료
     public QueueToken expire() {
-        return new QueueToken(
+        QueueToken expired = new QueueToken(
                 this.tokenValue,
                 this.userId,
                 this.concertId,
                 QueueStatus.EXPIRED,
                 this.createdAt,
                 this.expiresAt,
-                this.position,
                 this.enteredAt
         );
+
+        // 기술적 필드 복사
+        expired.id = this.id;
+        expired.position = this.position;
+
+        return expired;
     }
 
     // 토큰 완료 (예약 완료 후)
@@ -97,16 +108,20 @@ public class QueueToken {
             throw new IllegalStateException("활성 토큰만 완료할 수 있습니다.");
         }
 
-        return new QueueToken(
+        QueueToken completed = new QueueToken(
                 this.tokenValue,
                 this.userId,
                 this.concertId,
                 QueueStatus.COMPLETED,
                 this.createdAt,
                 this.expiresAt,
-                this.position,
                 this.enteredAt
         );
+
+        completed.id = this.id;
+        completed.position = this.position;
+
+        return completed;
     }
 
     // 비즈니스 로직 - 만료 여부 확인

@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-@Repository
+@Repository("seatReservationRepositoryImpl")
 public class SeatReservationRepositoryImpl implements SeatReservationRepository {
 
     private final SeatReservationJpaRepository jpaRepository;
@@ -62,8 +62,8 @@ public class SeatReservationRepositoryImpl implements SeatReservationRepository 
 
     @Override
     public List<SeatReservation> findExpiredReservations(LocalDateTime now) {
-        return jpaRepository.findExpiredReservations(now)
-                .stream()
+        List<SeatReservationEntity> entities = jpaRepository.findExpiredReservations(now);
+        return entities.stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
@@ -82,6 +82,19 @@ public class SeatReservationRepositoryImpl implements SeatReservationRepository 
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public Optional<SeatReservation> findByConcertIdAndSeatNumberForUpdate(Long concertId, Integer seatNumber) {
+        return jpaRepository.findAndLockByConcertIdAndSeatNumber(concertId, seatNumber)
+                .map(this::toDomain);
+    }
+
+    @Override
+    public List<SeatReservation> findAll() {
+        return jpaRepository.findAll().stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
     // Entity → Domain 변환
     private SeatReservation toDomain(SeatReservationEntity entity) {
         SeatReservation reservation;
@@ -95,11 +108,14 @@ public class SeatReservationRepositoryImpl implements SeatReservationRepository 
                 );
                 break;
             case RESERVED:
-                reservation = SeatReservation.createTemporaryReservation(
+                // 기존 시간 정보를 그대로 복원
+                reservation = SeatReservation.createWithTimes(
                         entity.getConcertId(),
                         entity.getSeatNumber(),
                         entity.getUserId(),
-                        entity.getPrice()
+                        entity.getPrice(),
+                        entity.getReservedAt(),
+                        entity.getExpiresAt()  // Entity의 실제 만료 시간 사용
                 );
                 break;
             case SOLD:
@@ -114,14 +130,13 @@ public class SeatReservationRepositoryImpl implements SeatReservationRepository 
                 throw new IllegalStateException("Unknown seat status: " + entity.getStatus());
         }
 
-        // ID 할당
         reservation.assignId(entity.getId());
         return reservation;
     }
 
     // Domain → Entity 변환
     private SeatReservationEntity toEntity(SeatReservation domain) {
-        return new SeatReservationEntity(
+        SeatReservationEntity entity = new SeatReservationEntity(
                 domain.getConcertId(),
                 domain.getSeatNumber(),
                 domain.getUserId(),
@@ -130,5 +145,10 @@ public class SeatReservationRepositoryImpl implements SeatReservationRepository 
                 domain.getExpiresAt(),
                 domain.getPrice()
         );
+        if (domain.getId() != null) {
+            entity.setId(domain.getId());
+        }
+
+        return entity;
     }
 }

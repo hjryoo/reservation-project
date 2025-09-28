@@ -3,8 +3,10 @@ package kr.hhplus.be.server.application;
 import kr.hhplus.be.server.domain.model.*;
 import kr.hhplus.be.server.domain.port.in.ProcessPaymentUseCase;
 import kr.hhplus.be.server.domain.port.out.*;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Service("processPaymentService")
 public class ProcessPaymentService implements ProcessPaymentUseCase {
 
     private final ReservationRepository reservationRepository;
@@ -26,27 +28,25 @@ public class ProcessPaymentService implements ProcessPaymentUseCase {
     @Transactional
     public Payment processPayment(ProcessPaymentCommand command) {
         // 1. 예약 조회 및 유효성 검증
-        Reservation reservation = reservationRepository.findById(command.getReservationId());
+        Reservation reservation = reservationRepository.findById(command.reservationId());
 
         if (reservation.isExpired()) {
             throw new IllegalStateException("예약이 만료되었습니다.");
         }
 
         // 2. 사용자 잔액 확인 및 차감
-        User user = userRepository.findById(command.getUserId());
+        User user = userRepository.findById(command.userId())
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + command.userId()));
 
-        if (!user.hasEnoughBalance(command.getAmount())) {
-            throw new IllegalStateException("잔액이 부족합니다.");
+        if (!user.hasEnoughBalance(command.amount())) {
+            throw new IllegalStateException("잔액이 부족합니다. 현재 잔액: " + user.getBalance() + ", 필요 금액: " + command.amount());
         }
-
-        User updatedUser = user.deductBalance(command.getAmount());
-        userRepository.save(updatedUser);
 
         // 3. 결제 처리
         Payment payment = Payment.create(
-                command.getReservationId(),
-                command.getUserId(),
-                command.getAmount()
+                command.reservationId(),
+                command.userId(),
+                command.amount()
         );
 
         Payment completedPayment = paymentGateway.processPayment(payment);

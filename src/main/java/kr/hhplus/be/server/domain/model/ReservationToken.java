@@ -58,8 +58,10 @@ public class ReservationToken {
         return status == TokenStatus.WAITING && !isExpired();
     }
 
-    // ID 할당 (Infrastructure 레이어에서만 사용)
-    void assignId(Long id) {
+    public void assignId(Long id) {
+        if (this.id != null) {
+            throw new IllegalStateException("ID가 이미 할당되어 있습니다: " + this.id);
+        }
         this.id = id;
     }
 

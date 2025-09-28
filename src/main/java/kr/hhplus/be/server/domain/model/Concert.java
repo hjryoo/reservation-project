@@ -3,23 +3,25 @@ package kr.hhplus.be.server.domain.model;
 import java.time.LocalDateTime;
 
 public class Concert {
+    // 기술적 필드 (mutable)
     private Long id;
-    private final String title;
-    private final String artist;
-    private final LocalDateTime concertDate;
-    private final Integer totalSeats;
-    private Integer availableSeats;
-    private final Integer price;
-    private ConcertStatus status;
-    private final LocalDateTime createdAt;
+    private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
-    // 생성자
-    private Concert(String title, String artist, LocalDateTime concertDate,
-                    Integer totalSeats, Integer price) {
+    // 비즈니스 필드 (final)
+    private final String title;
+    private final String artist;
+    private final String venue;
+    private final Integer totalSeats;
+    private Integer availableSeats;  // mutable - 예약에 따라 변경
+    private final Long price;
+    private ConcertStatus status;    // mutable - 상태 변경 가능
+
+    private Concert(String title, String artist, String venue,
+                    Integer totalSeats, Long price) {
         this.title = title;
         this.artist = artist;
-        this.concertDate = concertDate;
+        this.venue = venue;
         this.totalSeats = totalSeats;
         this.availableSeats = totalSeats;
         this.price = price;
@@ -28,19 +30,15 @@ public class Concert {
         this.updatedAt = LocalDateTime.now();
     }
 
-    // 팩토리 메서드
-    public static Concert create(String title, String artist,
-                                 LocalDateTime concertDate, Integer totalSeats,
-                                 Integer price) {
-        validateInput(title, artist, concertDate, totalSeats, price);
-        return new Concert(title, artist, concertDate, totalSeats, price);
+    public static Concert create(String title, String artist, String venue,
+                                 Integer totalSeats, Long price) {
+        validateInput(title, artist, venue, totalSeats, price);
+        return new Concert(title, artist, venue, totalSeats, price);
     }
 
-    // 비즈니스 규칙 메서드
+    // 비즈니스 규칙
     public boolean isBookingAvailable() {
-        return status == ConcertStatus.AVAILABLE &&
-                availableSeats > 0 &&
-                concertDate.isAfter(LocalDateTime.now());
+        return status == ConcertStatus.AVAILABLE && availableSeats > 0;
     }
 
     public void updateStatus(ConcertStatus status) {
@@ -67,20 +65,16 @@ public class Concert {
         this.updatedAt = LocalDateTime.now();
     }
 
-    // 입력값 검증
-    private static void validateInput(String title, String artist, LocalDateTime concertDate,
-                                      Integer totalSeats, Integer price) {
+    private static void validateInput(String title, String artist, String venue,
+                                      Integer totalSeats, Long price) {
         if (title == null || title.trim().isEmpty()) {
             throw new IllegalArgumentException("콘서트 제목은 필수입니다.");
         }
         if (artist == null || artist.trim().isEmpty()) {
             throw new IllegalArgumentException("아티스트명은 필수입니다.");
         }
-        if (concertDate == null) {
-            throw new IllegalArgumentException("콘서트 날짜는 필수입니다.");
-        }
-        if (concertDate.isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException("콘서트 날짜는 현재 시간 이후여야 합니다.");
+        if (venue == null || venue.trim().isEmpty()) {
+            throw new IllegalArgumentException("공연장은 필수입니다.");
         }
         if (totalSeats == null || totalSeats <= 0) {
             throw new IllegalArgumentException("총 좌석 수는 1 이상이어야 합니다.");
@@ -90,27 +84,25 @@ public class Concert {
         }
     }
 
-    // Infrastructure에서만 사용하는 메서드 (package-private)
-    void assignId(Long id) {
+    // Infrastructure 전용 메서드
+    public void assignTechnicalFields(Long id, LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.id = id;
-    }
-
-    void updateAvailableSeats(Integer availableSeats) {
-        this.availableSeats = availableSeats;
-    }
-
-    void updateUpdatedAt(LocalDateTime updatedAt) {
+        this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+    }
+
+    public void assignId(Long id) {
+        this.id = id;
     }
 
     // Getters
     public Long getId() { return id; }
     public String getTitle() { return title; }
     public String getArtist() { return artist; }
-    public LocalDateTime getConcertDate() { return concertDate; }
+    public String getVenue() { return venue; }
     public Integer getTotalSeats() { return totalSeats; }
     public Integer getAvailableSeats() { return availableSeats; }
-    public Integer getPrice() { return price; }
+    public Long getPrice() { return price; }
     public ConcertStatus getStatus() { return status; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

@@ -25,4 +25,8 @@ public interface SeatReservationRepository {
 
     // 특정 사용자의 예약 조회
     List<SeatReservation> findByUserIdAndStatus(Long userId, SeatStatus status);
+
+    Optional<SeatReservation> findByConcertIdAndSeatNumberForUpdate(Long concertId, Integer seatNumber);
+
+    List<SeatReservation> findAll();
 }

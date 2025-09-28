@@ -1,11 +1,9 @@
 package kr.hhplus.be.server.infrastructure.persistence;
 
+import jakarta.persistence.QueryHint;
 import kr.hhplus.be.server.domain.model.SeatStatus;
 import kr.hhplus.be.server.infrastructure.persistence.entity.SeatReservationEntity;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
@@ -15,7 +13,6 @@ import java.util.Optional;
 public interface SeatReservationJpaRepository extends JpaRepository<SeatReservationEntity, Long> {
 
     Optional<SeatReservationEntity> findByConcertIdAndSeatNumber(Long concertId, Integer seatNumber);
-
     // 비관적 락으로 좌석 조회 (동시성 제어)
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM SeatReservationEntity s WHERE s.concertId = :concertId AND s.seatNumber = :seatNumber")
@@ -48,4 +45,8 @@ public interface SeatReservationJpaRepository extends JpaRepository<SeatReservat
     // 콘서트별 통계 (성능 최적화를 위한 커버링 인덱스 활용)
     @Query("SELECT s.status, COUNT(s) FROM SeatReservationEntity s WHERE s.concertId = :concertId GROUP BY s.status")
     List<Object[]> countSeatsByStatus(@Param("concertId") Long concertId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SeatReservationEntity s where s.concertId = :concertId and s.seatNumber = :seatNumber")
+    Optional<SeatReservationEntity> findAndLockByConcertIdAndSeatNumber(@Param("concertId") Long concertId, @Param("seatNumber") Integer seatNumber);
 }

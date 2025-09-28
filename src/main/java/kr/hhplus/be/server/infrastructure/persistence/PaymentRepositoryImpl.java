@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-@Repository
+@Repository("paymentRepositoryImpl")
 @Transactional(readOnly = true)
 public class PaymentRepositoryImpl implements PaymentRepository {
 

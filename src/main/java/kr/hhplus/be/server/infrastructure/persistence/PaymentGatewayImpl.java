@@ -2,9 +2,11 @@ package kr.hhplus.be.server.infrastructure.persistence;
 
 import kr.hhplus.be.server.domain.model.Payment;
 import kr.hhplus.be.server.domain.port.out.PaymentGateway;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 @Component
+@Profile("!test")
 public class PaymentGatewayImpl implements PaymentGateway {
 
     @Override

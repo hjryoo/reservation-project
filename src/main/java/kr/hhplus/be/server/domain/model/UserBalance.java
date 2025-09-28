@@ -58,8 +58,7 @@ public class UserBalance {
         return this.balance >= amount;
     }
 
-    // ID 할당 (Infrastructure 레이어에서만 사용)
-    void assignId(Long id) {
+    public void assignId(Long id) {
         this.id = id;
     }
 
