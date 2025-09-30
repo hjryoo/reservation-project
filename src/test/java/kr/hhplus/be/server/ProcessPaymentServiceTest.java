@@ -1,9 +1,13 @@
 package kr.hhplus.be.server;
 
 import kr.hhplus.be.server.application.ProcessPaymentService;
+import kr.hhplus.be.server.application.service.ConcurrencySeatReservationService;
+import kr.hhplus.be.server.application.service.ConcurrencyUserBalanceService;
 import kr.hhplus.be.server.domain.model.*;
 import kr.hhplus.be.server.domain.port.in.ProcessPaymentUseCase.ProcessPaymentCommand;
 import kr.hhplus.be.server.domain.port.out.*;
+import kr.hhplus.be.server.domain.repository.PaymentRepository;
+import kr.hhplus.be.server.domain.repository.SeatReservationRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -11,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.AssertionsForClassTypes.*;
@@ -21,23 +26,31 @@ import static org.mockito.Mockito.*;
 class ProcessPaymentServiceTest {
 
     @Mock
-    private ReservationRepository reservationRepository;
-
-    @Mock
-    private UserRepository userRepository;
-
-    @Mock
-    private SeatRepository seatRepository;
+    private PaymentRepository paymentRepository;
 
     @Mock
     private PaymentGateway paymentGateway;
+
+    @Mock
+    private ConcurrencyUserBalanceService userBalanceService;
+
+    @Mock
+    private ConcurrencySeatReservationService seatReservationService;
+
+    @Mock
+    private SeatReservationRepository seatReservationRepository;
 
     private ProcessPaymentService processPaymentService;
 
     @BeforeEach
     void setUp() {
         processPaymentService = new ProcessPaymentService(
-                reservationRepository, userRepository, seatRepository, paymentGateway);
+                paymentRepository,
+                paymentGateway,
+                userBalanceService,
+                seatReservationService,
+                seatReservationRepository
+        );
     }
 
     @Test
@@ -48,30 +61,32 @@ class ProcessPaymentServiceTest {
         Long userId = 1L;
         Long amount = 150000L;
         Long concertId = 100L;
-        int seatNumber = 1;
+        Integer seatNumber = 1;
 
-        Reservation reservation = mock(Reservation.class);
-        when(reservation.isExpired()).thenReturn(false);
-        when(reservation.getConcertId()).thenReturn(concertId);
-        when(reservation.getSeatNumber()).thenReturn(seatNumber);
+        // 예약 정보 Mock
+        SeatReservation reservation = SeatReservation.createTemporaryReservation(concertId, seatNumber, userId, amount);
+        reservation.assignId(reservationId);
 
-        Reservation confirmedReservation = mock(Reservation.class);
-        when(reservation.confirmPayment()).thenReturn(confirmedReservation);
+        // 잔액 정보 Mock
+        UserBalance userBalance = UserBalance.of(userId, 200000L, LocalDateTime.now(), 0L);
 
-        User user = User.create("user123", 200000L);
-        user.assignId(userId);
+        // 결제 객체 Mock
+        Payment pendingPayment = Payment.create(reservationId, userId, amount);
+        pendingPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
 
-        Seat seat = mock(Seat.class);
-        Seat soldSeat = mock(Seat.class);
-        when(seat.markAsSold()).thenReturn(soldSeat);
+        Payment completedPayment = pendingPayment.complete("txn-123");
 
-        Payment payment = Payment.create(reservationId, userId, amount);
-        Payment completedPayment = payment.complete();
+        // 확정된 좌석 Mock
+        SeatReservation confirmedSeat = SeatReservation.createConfirmedReservation(concertId, seatNumber, userId, amount);
 
-        when(reservationRepository.findById(reservationId)).thenReturn(reservation);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        when(seatRepository.findByConcertIdAndSeatNumber(concertId, seatNumber)).thenReturn(seat);
+        // Mock 설정
+        when(seatReservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(userBalanceService.deductBalanceWithConditionalUpdate(userId, amount)).thenReturn(userBalance);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(pendingPayment)
+                .thenReturn(completedPayment);
         when(paymentGateway.processPayment(any(Payment.class))).thenReturn(completedPayment);
+        when(seatReservationService.confirmSeatReservation(concertId, seatNumber, userId)).thenReturn(confirmedSeat);
 
         // When
         ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
@@ -84,117 +99,200 @@ class ProcessPaymentServiceTest {
         assertThat(result.getUserId()).isEqualTo(userId);
         assertThat(result.getAmount()).isEqualTo(amount);
 
-        verify(reservationRepository).save(confirmedReservation);
-        verify(seatRepository).save(soldSeat);
+        verify(seatReservationRepository).findById(reservationId);
+        verify(userBalanceService).deductBalanceWithConditionalUpdate(userId, amount);
         verify(paymentGateway).processPayment(any(Payment.class));
+        verify(seatReservationService).confirmSeatReservation(concertId, seatNumber, userId);
+        verify(paymentRepository, times(2)).save(any(Payment.class));
     }
 
     @Test
-    @DisplayName("결제 처리 실패 - 잔액이 부족하면 예외가 발생한다")
-    void processPayment_InsufficientBalance_ThrowsException() {
+    @DisplayName("결제 처리 실패 - 잔액이 부족하면 실패한 결제를 반환한다")
+    void processPayment_InsufficientBalance_ReturnsFailed() {
         // Given
         Long reservationId = 1L;
         Long userId = 1L;
         Long amount = 150000L;
+        Long concertId = 100L;
+        Integer seatNumber = 1;
 
-        Reservation reservation = mock(Reservation.class);
-        when(reservation.isExpired()).thenReturn(false);
+        SeatReservation reservation = SeatReservation.createTemporaryReservation(concertId, seatNumber, userId, amount);
+        reservation.assignId(reservationId);
 
-        User user = User.create("user123", 50000L); // 잔액 부족
-        user.assignId(userId);
+        Payment failedPayment = Payment.create(reservationId, userId, amount);
+        failedPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
+        failedPayment = failedPayment.fail("결제 처리 중 오류 발생: 잔액이 부족합니다.");
 
-        when(reservationRepository.findById(reservationId)).thenReturn(reservation);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        // Mock 설정: 잔액 부족으로 예외 발생
+        when(seatReservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(userBalanceService.deductBalanceWithConditionalUpdate(userId, amount))
+                .thenThrow(new IllegalStateException("잔액이 부족합니다. 현재 잔액: 50000, 차감 요청: 150000"));
+        when(paymentRepository.save(any(Payment.class))).thenReturn(failedPayment);
 
-        // When & Then
+        // When
         ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
+        Payment result = processPaymentService.processPayment(command);
 
-        assertThatThrownBy(() -> processPaymentService.processPayment(command))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("잔액이 부족합니다");
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.getStatus()).isEqualTo(Payment.PaymentStatus.FAILED);
+        assertThat(result.getFailureReason()).contains("잔액이 부족합니다");
 
+        verify(seatReservationRepository).findById(reservationId);
+        verify(userBalanceService).deductBalanceWithConditionalUpdate(userId, amount);
         verify(paymentGateway, never()).processPayment(any(Payment.class));
-        verify(reservationRepository, never()).save(any(Reservation.class));
-        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatReservationService, never()).confirmSeatReservation(any(), any(), any());
     }
 
     @Test
     @DisplayName("결제 처리 실패 - 만료된 예약으로는 결제할 수 없다")
-    void processPayment_ExpiredReservation_ThrowsException() {
+    void processPayment_ExpiredReservation_ReturnsFailed() {
         // Given
         Long reservationId = 1L;
         Long userId = 1L;
         Long amount = 150000L;
+        Long concertId = 100L;
+        Integer seatNumber = 1;
 
-        Reservation expiredReservation = mock(Reservation.class);
-        when(expiredReservation.isExpired()).thenReturn(true);
+        // 만료된 예약 생성
+        SeatReservation expiredReservation = SeatReservation.createTemporaryReservation(concertId, seatNumber, userId, amount);
+        expiredReservation.assignId(reservationId);
+        expiredReservation.forceExpire(LocalDateTime.now().minusMinutes(10)); // 10분 전에 만료
 
-        when(reservationRepository.findById(reservationId)).thenReturn(expiredReservation);
+        Payment failedPayment = Payment.create(reservationId, userId, amount);
+        failedPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
+        failedPayment = failedPayment.fail("결제 처리 중 오류 발생: 결제할 수 없는 예약입니다.");
 
-        // When & Then
+        when(seatReservationRepository.findById(reservationId)).thenReturn(Optional.of(expiredReservation));
+        when(paymentRepository.save(any(Payment.class))).thenReturn(failedPayment);
+
+        // When
         ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
+        Payment result = processPaymentService.processPayment(command);
 
-        assertThatThrownBy(() -> processPaymentService.processPayment(command))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("예약이 만료되었습니다");
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.getStatus()).isEqualTo(Payment.PaymentStatus.FAILED);
+        assertThat(result.getFailureReason()).contains("결제할 수 없는 예약");
 
-        verify(userRepository, never()).findById(any());
+        verify(seatReservationRepository).findById(reservationId);
+        verify(userBalanceService, never()).deductBalanceWithConditionalUpdate(any(), any());
         verify(paymentGateway, never()).processPayment(any(Payment.class));
     }
 
     @Test
-    @DisplayName("결제 처리 실패 - 존재하지 않는 사용자로는 결제할 수 없다")
-    void processPayment_UserNotFound_ThrowsException() {
+    @DisplayName("결제 처리 실패 - 존재하지 않는 예약으로는 결제할 수 없다")
+    void processPayment_ReservationNotFound_ReturnsFailed() {
         // Given
-        Long reservationId = 1L;
-        Long userId = 999L;
+        Long reservationId = 999L;
+        Long userId = 1L;
         Long amount = 150000L;
 
-        Reservation reservation = mock(Reservation.class);
-        when(reservation.isExpired()).thenReturn(false);
+        Payment failedPayment = Payment.create(reservationId, userId, amount);
+        failedPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
+        failedPayment = failedPayment.fail("결제 처리 중 오류 발생: 예약 정보를 찾을 수 없습니다.");
 
-        when(reservationRepository.findById(reservationId)).thenReturn(reservation);
-        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+        when(seatReservationRepository.findById(reservationId)).thenReturn(Optional.empty());
+        when(paymentRepository.save(any(Payment.class))).thenReturn(failedPayment);
 
-        // When & Then
+        // When
         ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
+        Payment result = processPaymentService.processPayment(command);
 
-        assertThatThrownBy(() -> processPaymentService.processPayment(command))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("사용자를 찾을 수 없습니다");
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.getStatus()).isEqualTo(Payment.PaymentStatus.FAILED);
+        assertThat(result.getFailureReason()).contains("예약 정보를 찾을 수 없습니다");
 
+        verify(seatReservationRepository).findById(reservationId);
+        verify(userBalanceService, never()).deductBalanceWithConditionalUpdate(any(), any());
         verify(paymentGateway, never()).processPayment(any(Payment.class));
     }
 
     @Test
-    @DisplayName("결제 처리 실패 - 결제 게이트웨이 오류 시 예외가 발생한다")
-    void processPayment_PaymentGatewayFailure_ThrowsException() {
+    @DisplayName("결제 처리 실패 - 결제 게이트웨이 오류 시 롤백 처리된다")
+    void processPayment_PaymentGatewayFailure_RollbackPerformed() {
         // Given
         Long reservationId = 1L;
         Long userId = 1L;
         Long amount = 150000L;
+        Long concertId = 100L;
+        Integer seatNumber = 1;
 
-        Reservation reservation = mock(Reservation.class);
-        when(reservation.isExpired()).thenReturn(false);
+        SeatReservation reservation = SeatReservation.createTemporaryReservation(concertId, seatNumber, userId, amount);
+        reservation.assignId(reservationId);
 
-        User user = User.create("user123", 200000L);
-        user.assignId(userId);
+        UserBalance userBalance = UserBalance.of(userId, 200000L, LocalDateTime.now(), 0L);
 
-        when(reservationRepository.findById(reservationId)).thenReturn(reservation);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        Payment pendingPayment = Payment.create(reservationId, userId, amount);
+        pendingPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
+
+        Payment failedPayment = pendingPayment.fail("결제 처리 중 오류 발생: 결제 게이트웨이 오류");
+
+        // Mock 설정: 게이트웨이에서 예외 발생
+        when(seatReservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(userBalanceService.deductBalanceWithConditionalUpdate(userId, amount)).thenReturn(userBalance);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(pendingPayment)
+                .thenReturn(failedPayment);
         when(paymentGateway.processPayment(any(Payment.class)))
                 .thenThrow(new RuntimeException("결제 게이트웨이 오류"));
 
-        // When & Then
+        // When
         ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
+        Payment result = processPaymentService.processPayment(command);
 
-        assertThatThrownBy(() -> processPaymentService.processPayment(command))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("결제 게이트웨이 오류");
+        // Then: 실패한 결제가 반환되어야 함
+        assertThat(result).isNotNull();
+        assertThat(result.getStatus()).isEqualTo(Payment.PaymentStatus.FAILED);
+        assertThat(result.getFailureReason()).contains("결제 게이트웨이 오류");
 
         verify(paymentGateway).processPayment(any(Payment.class));
-        verify(reservationRepository, never()).save(any(Reservation.class));
-        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatReservationService, never()).confirmSeatReservation(any(), any(), any());
+        verify(paymentRepository, times(2)).save(any(Payment.class));
+    }
+
+    @Test
+    @DisplayName("결제 게이트웨이에서 실패 응답이 오면 롤백 처리된다")
+    void processPayment_PaymentGatewayFailureResponse_RollbackPerformed() {
+        // Given
+        Long reservationId = 1L;
+        Long userId = 1L;
+        Long amount = 150000L;
+        Long concertId = 100L;
+        Integer seatNumber = 1;
+
+        SeatReservation reservation = SeatReservation.createTemporaryReservation(concertId, seatNumber, userId, amount);
+        reservation.assignId(reservationId);
+
+        UserBalance userBalance = UserBalance.of(userId, 200000L, LocalDateTime.now(), 0L);
+
+        Payment pendingPayment = Payment.create(reservationId, userId, amount);
+        pendingPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
+
+        Payment failedPayment = pendingPayment.fail("게이트웨이 실패");
+
+        // Mock 설정: 게이트웨이에서 실패 응답
+        when(seatReservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(userBalanceService.deductBalanceWithConditionalUpdate(userId, amount)).thenReturn(userBalance);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(pendingPayment)
+                .thenReturn(failedPayment);
+        when(paymentGateway.processPayment(any(Payment.class))).thenReturn(failedPayment);
+        when(userBalanceService.chargeBalance(userId, amount)).thenReturn(userBalance);
+
+        // When
+        ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
+        Payment result = processPaymentService.processPayment(command);
+
+        // Then
+        assertThat(result.getStatus()).isEqualTo(Payment.PaymentStatus.FAILED);
+        assertThat(result.getFailureReason()).isEqualTo("게이트웨이 실패");
+
+        verify(paymentGateway).processPayment(any(Payment.class));
+        verify(userBalanceService).chargeBalance(userId, amount); // 롤백 확인
+        verify(seatReservationService, never()).confirmSeatReservation(any(), any(), any());
+        verify(paymentRepository, times(2)).save(any(Payment.class));
     }
 
     @Test
@@ -205,136 +303,68 @@ class ProcessPaymentServiceTest {
         Long userId = 1L;
         Long amount = 150000L;
         Long concertId = 100L;
-        int seatNumber = 1;
+        Integer seatNumber = 1;
 
-        Reservation reservation = mock(Reservation.class);
-        when(reservation.isExpired()).thenReturn(false);
-        when(reservation.getConcertId()).thenReturn(concertId);
-        when(reservation.getSeatNumber()).thenReturn(seatNumber);
+        SeatReservation reservation = SeatReservation.createTemporaryReservation(concertId, seatNumber, userId, amount);
+        reservation.assignId(reservationId);
 
-        Reservation confirmedReservation = mock(Reservation.class);
-        when(reservation.confirmPayment()).thenReturn(confirmedReservation);
+        UserBalance userBalance = UserBalance.of(userId, 200000L, LocalDateTime.now(), 0L);
 
-        User user = User.create("user123", 200000L);
-        user.assignId(userId);
+        Payment pendingPayment = Payment.create(reservationId, userId, amount);
+        pendingPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
 
-        Seat seat = mock(Seat.class);
-        Seat soldSeat = mock(Seat.class);
-        when(seat.markAsSold()).thenReturn(soldSeat);
+        Payment completedPayment = pendingPayment.complete("txn-123");
+        SeatReservation confirmedSeat = SeatReservation.createConfirmedReservation(concertId, seatNumber, userId, amount);
 
-        Payment payment = Payment.create(reservationId, userId, amount);
-        Payment completedPayment = payment.complete();
-
-        when(reservationRepository.findById(reservationId)).thenReturn(reservation);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        when(seatRepository.findByConcertIdAndSeatNumber(concertId, seatNumber)).thenReturn(seat);
+        when(seatReservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(userBalanceService.deductBalanceWithConditionalUpdate(userId, amount)).thenReturn(userBalance);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(pendingPayment)
+                .thenReturn(completedPayment);
         when(paymentGateway.processPayment(any(Payment.class))).thenReturn(completedPayment);
+        when(seatReservationService.confirmSeatReservation(concertId, seatNumber, userId)).thenReturn(confirmedSeat);
 
         // When
         ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
         processPaymentService.processPayment(command);
 
         // Then: 호출 순서 검증
-        var inOrder = inOrder(reservationRepository, userRepository, paymentGateway, seatRepository);
+        var inOrder = inOrder(seatReservationRepository, userBalanceService, paymentRepository, paymentGateway, seatReservationService);
 
-        inOrder.verify(reservationRepository).findById(reservationId);
-        inOrder.verify(userRepository).findById(userId);
+        inOrder.verify(seatReservationRepository).findById(reservationId);
+        inOrder.verify(userBalanceService).deductBalanceWithConditionalUpdate(userId, amount);
+        inOrder.verify(paymentRepository).save(any(Payment.class));
         inOrder.verify(paymentGateway).processPayment(any(Payment.class));
-        inOrder.verify(reservationRepository).save(confirmedReservation);
-        inOrder.verify(seatRepository).findByConcertIdAndSeatNumber(concertId, seatNumber);
-        inOrder.verify(seatRepository).save(soldSeat);
+        inOrder.verify(seatReservationService).confirmSeatReservation(concertId, seatNumber, userId);
+        inOrder.verify(paymentRepository).save(any(Payment.class));
     }
 
     @Test
-    @DisplayName("잔액이 정확히 일치할 때 결제가 성공한다")
-    void processPayment_ExactBalanceMatch_Success() {
-        // Given
-        Long reservationId = 1L;
-        Long userId = 1L;
-        Long amount = 100000L; // 정확히 같은 금액
-        Long concertId = 100L;
-        int seatNumber = 1;
-
-        Reservation reservation = mock(Reservation.class);
-        when(reservation.isExpired()).thenReturn(false);
-        when(reservation.getConcertId()).thenReturn(concertId);
-        when(reservation.getSeatNumber()).thenReturn(seatNumber);
-
-        Reservation confirmedReservation = mock(Reservation.class);
-        when(reservation.confirmPayment()).thenReturn(confirmedReservation);
-
-        User user = User.create("user123", 100000L); // 정확히 같은 잔액
-        user.assignId(userId);
-
-        Seat seat = mock(Seat.class);
-        Seat soldSeat = mock(Seat.class);
-        when(seat.markAsSold()).thenReturn(soldSeat);
-
-        Payment payment = Payment.create(reservationId, userId, amount);
-        Payment completedPayment = payment.complete();
-
-        when(reservationRepository.findById(reservationId)).thenReturn(reservation);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        when(seatRepository.findByConcertIdAndSeatNumber(concertId, seatNumber)).thenReturn(seat);
-        when(paymentGateway.processPayment(any(Payment.class))).thenReturn(completedPayment);
-
-        // When & Then: 예외가 발생하지 않아야 함
-        ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
-
-        assertThatCode(() -> processPaymentService.processPayment(command))
-                .doesNotThrowAnyException();
-
-        verify(paymentGateway).processPayment(any(Payment.class));
-        verify(reservationRepository).save(confirmedReservation);
-        verify(seatRepository).save(soldSeat);
-    }
-
-    @Test
-    @DisplayName("예약 확정과 좌석 판매가 모두 성공한다")
-    void processPayment_ReservationAndSeatUpdated_Success() {
+    @DisplayName("멱등성 키를 사용한 중복 결제 방지 테스트")
+    void processPaymentIdempotent_DuplicateRequest_ReturnsExistingPayment() {
         // Given
         Long reservationId = 1L;
         Long userId = 1L;
         Long amount = 150000L;
-        Long concertId = 100L;
-        int seatNumber = 1;
+        String idempotencyKey = "payment-key-123";
 
-        Reservation reservation = mock(Reservation.class);
-        when(reservation.isExpired()).thenReturn(false);
-        when(reservation.getConcertId()).thenReturn(concertId);
-        when(reservation.getSeatNumber()).thenReturn(seatNumber);
+        Payment existingPayment = Payment.createWithIdempotency(reservationId, userId, amount, idempotencyKey);
+        existingPayment.assignTechnicalFields(1L, LocalDateTime.now(), LocalDateTime.now(), 0L);
 
-        Reservation confirmedReservation = mock(Reservation.class);
-        when(reservation.confirmPayment()).thenReturn(confirmedReservation);
-
-        User user = User.create("user123", 200000L);
-        user.assignId(userId);
-
-        Seat seat = mock(Seat.class);
-        Seat soldSeat = mock(Seat.class);
-        when(seat.markAsSold()).thenReturn(soldSeat);
-
-        Payment payment = Payment.create(reservationId, userId, amount);
-        Payment completedPayment = payment.complete();
-
-        when(reservationRepository.findById(reservationId)).thenReturn(reservation);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        when(seatRepository.findByConcertIdAndSeatNumber(concertId, seatNumber)).thenReturn(seat);
-        when(paymentGateway.processPayment(any(Payment.class))).thenReturn(completedPayment);
+        when(paymentRepository.findByReservationIdAndIdempotencyKey(reservationId, idempotencyKey))
+                .thenReturn(Optional.of(existingPayment));
 
         // When
         ProcessPaymentCommand command = new ProcessPaymentCommand(reservationId, userId, amount);
-        Payment result = processPaymentService.processPayment(command);
+        Payment result = processPaymentService.processPaymentIdempotent(command, idempotencyKey);
 
-        // Then: 반환값 검증
-        assertThat(result.getStatus()).isEqualTo(Payment.PaymentStatus.COMPLETED);
+        // Then
+        assertThat(result).isEqualTo(existingPayment);
 
-        // 예약 확정 검증
-        verify(reservation).confirmPayment();
-        verify(reservationRepository).save(confirmedReservation);
-
-        // 좌석 판매 검증
-        verify(seat).markAsSold();
-        verify(seatRepository).save(soldSeat);
+        // 새로운 결제 처리가 수행되지 않아야 함
+        verify(seatReservationRepository, never()).findById(any());
+        verify(userBalanceService, never()).deductBalanceWithConditionalUpdate(any(), any());
+        verify(paymentGateway, never()).processPayment(any(Payment.class));
+        verify(paymentRepository).findByReservationIdAndIdempotencyKey(reservationId, idempotencyKey);
     }
 }

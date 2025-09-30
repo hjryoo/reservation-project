@@ -103,6 +103,11 @@ public class PaymentRepositoryImpl implements PaymentRepository {
         return jpaRepository.countByStatusAndCreatedAtBetween(status, startDate, endDate);
     }
 
+    @Override
+    public Optional<Payment> findByReservationIdAndIdempotencyKey(Long reservationId, String idempotencyKey) {
+        return jpaRepository.findByReservationIdAndIdempotencyKey(reservationId, idempotencyKey)
+                .map(this::toDomain);
+    }
 
     private PaymentEntity toEntity(Payment domain) {
         PaymentEntity entity = new PaymentEntity(

@@ -6,9 +6,11 @@ import kr.hhplus.be.server.domain.model.TransactionType;
 import kr.hhplus.be.server.domain.repository.UserBalanceRepository;
 import kr.hhplus.be.server.infrastructure.persistence.entity.UserBalanceEntity;
 import kr.hhplus.be.server.infrastructure.persistence.entity.BalanceHistoryEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -156,5 +158,47 @@ public class UserBalanceRepositoryImpl implements UserBalanceRepository {
                 domain.getIdempotencyKey(),
                 domain.getCreatedAt()
         );
+    }
+
+    @Override
+    @Transactional
+    public boolean deductBalanceConditionally(Long userId, Long amount) {
+        LocalDateTime now = LocalDateTime.now();
+        int updatedRows = balanceJpaRepository.deductBalanceConditionally(userId, amount, now);
+        return updatedRows > 0;
+    }
+
+    @Override
+    @Transactional
+    public boolean chargeBalanceConditionally(Long userId, Long amount) {
+        LocalDateTime now = LocalDateTime.now();
+        int updatedRows = balanceJpaRepository.chargeBalanceConditionally(userId, amount, now);
+        return updatedRows > 0;
+    }
+
+    @Override
+    @Transactional
+    public boolean deductBalanceWithOptimisticLock(Long userId, Long amount, Long expectedVersion) {
+        LocalDateTime now = LocalDateTime.now();
+        int updatedRows = balanceJpaRepository.deductBalanceWithOptimisticLock(userId, amount, expectedVersion, now);
+        return updatedRows > 0;
+    }
+
+    @Override
+    @Transactional
+    public boolean createInitialBalanceIfNotExists(Long userId, Long initialBalance) {
+        // 이미 존재하는지 먼저 확인
+        if (balanceJpaRepository.findByUserId(userId).isPresent()) {
+            return false;
+        }
+
+        try {
+            UserBalanceEntity entity = new UserBalanceEntity(userId, initialBalance, LocalDateTime.now());
+            balanceJpaRepository.save(entity);
+            return true;
+        } catch (DataIntegrityViolationException e) {
+            // 동시 생성으로 인한 중복 키 오류
+            return false;
+        }
     }
 }

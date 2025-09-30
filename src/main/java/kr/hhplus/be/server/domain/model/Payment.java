@@ -71,6 +71,14 @@ public class Payment {
         );
     }
 
+    public static Payment createWithIdempotency(Long reservationId, Long userId, Long amount, String idempotencyKey) {
+        return new Payment(
+                reservationId, userId, amount,
+                PaymentStatus.PENDING, LocalDateTime.now(),
+                idempotencyKey, "DEFAULT", null, null
+        );
+    }
+
     // ===== 비즈니스 규칙: 결제 완료 =====
     public Payment complete() {
         if (this.status != PaymentStatus.PENDING) {
