@@ -151,4 +151,32 @@ public class SeatReservationRepositoryImpl implements SeatReservationRepository 
 
         return entity;
     }
+
+    @Override
+    @Transactional
+    public int reserveSeatConditionally(Long concertId, Integer seatNumber, Long userId, LocalDateTime expiresAt) {
+        LocalDateTime now = LocalDateTime.now();
+        return jpaRepository.reserveSeatConditionally(
+                concertId,
+                seatNumber,
+                userId,
+                SeatStatus.RESERVED,
+                now,           // reservedAt
+                expiresAt,     // expiresAt
+                now            // updatedAt
+        );
+    }
+
+    @Override
+    @Transactional
+    public int confirmSeatConditionally(Long concertId, Integer seatNumber, Long userId) {
+        LocalDateTime now = LocalDateTime.now();
+        return jpaRepository.confirmSeatConditionally(concertId, seatNumber, userId, now);
+    }
+
+    @Override
+    @Transactional
+    public int releaseExpiredReservationsBatch(LocalDateTime now) {
+        return jpaRepository.releaseExpiredReservationsBatch(now);
+    }
 }
