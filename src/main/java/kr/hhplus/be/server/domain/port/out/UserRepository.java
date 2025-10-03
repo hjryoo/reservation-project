@@ -17,4 +17,5 @@ public interface UserRepository {
 
     @Transactional
     Optional<User> findByUserIdWithLock(String userId);
+
 }

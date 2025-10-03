@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
 
-@RestController
+@RestController("userController")
 @RequestMapping("/api/v1/users")
 public class UserController {
 
@@ -32,7 +32,6 @@ public class UserController {
         return ResponseEntity.ok(UserBalanceResponse.from(user));
     }
 
-    @POST
     @RequestMapping("/{userId}/balance/charge")
     public ResponseEntity<UserBalanceResponse> chargeBalance(
             @PathVariable String userId,

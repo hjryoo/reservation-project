@@ -6,10 +6,10 @@ public class SeatReservation {
     private Long id;
     private final Long concertId;
     private final Integer seatNumber;
-    private final Long userId;
-    private final SeatStatus status;
-    private final LocalDateTime reservedAt;
-    private final LocalDateTime expiresAt;
+    private Long userId;
+    private SeatStatus status;
+    private LocalDateTime reservedAt;
+    private LocalDateTime expiresAt;
     private final Long price;
 
     private SeatReservation(Long concertId, Integer seatNumber, Long userId,
@@ -67,6 +67,20 @@ public class SeatReservation {
         );
     }
 
+    public static SeatReservation createWithTimes(Long concertId, Integer seatNumber,
+                                                  Long userId, Long price,
+                                                  LocalDateTime reservedAt, LocalDateTime expiresAt) {
+        return new SeatReservation(
+                concertId,
+                seatNumber,
+                userId,
+                SeatStatus.RESERVED,
+                reservedAt,
+                expiresAt,
+                price
+        );
+    }
+
     // 비즈니스 로직 - 예약 만료 여부
     public boolean isExpired() {
         if (status != SeatStatus.RESERVED || expiresAt == null) {
@@ -90,12 +104,52 @@ public class SeatReservation {
 
     // 비즈니스 로직 - 결제 가능 여부
     public boolean canBeConfirmed(Long userId) {
-        return isReservedBy(userId);
+        return this.status == SeatStatus.RESERVED &&
+                this.userId.equals(userId) &&
+                (this.expiresAt != null && this.expiresAt.isAfter(LocalDateTime.now()));
     }
 
     // ID 할당 (Infrastructure 레이어에서만 사용)
     public void assignId(Long id) {
         this.id = id;
+    }
+
+    public void reserveTemporarily(Long userId) {
+        if (this.status != SeatStatus.AVAILABLE) {
+            throw new IllegalStateException("예약 가능한 상태의 좌석이 아닙니다.");
+        }
+        this.status = SeatStatus.RESERVED;
+        this.userId = userId;
+        this.reservedAt = LocalDateTime.now();
+        this.expiresAt = this.reservedAt.plusMinutes(5); // 예: 5분 후 만료
+    }
+
+    public void reserve(Long userId) {
+        if (this.status != SeatStatus.AVAILABLE) {
+            throw new IllegalStateException("이미 예약되었거나 판매된 좌석입니다.");
+        }
+        this.status = SeatStatus.RESERVED;
+        this.userId = userId;
+        this.expiresAt = LocalDateTime.now().plusMinutes(5); // 5분 후 만료
+    }
+
+    public void confirm() {
+        if (this.status != SeatStatus.RESERVED) {
+            throw new IllegalStateException("예약 상태의 좌석만 확정할 수 있습니다.");
+        }
+        this.status = SeatStatus.SOLD;
+        this.expiresAt = null;
+    }
+
+    public void release() {
+        this.status = SeatStatus.AVAILABLE;
+        this.userId = null;
+        this.expiresAt = null;
+    }
+
+    // 테스트를 위해 만료 시간을 수동으로 설정하는 메서드 (선택 사항)
+    public void forceExpire(LocalDateTime time) {
+        this.expiresAt = time;
     }
 
     // Getters

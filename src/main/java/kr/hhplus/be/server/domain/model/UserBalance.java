@@ -8,8 +8,10 @@ public class UserBalance {
     private final Long balance;
     private final LocalDateTime lastUpdatedAt;
     private final Long version; // 낙관적 락을 위한 버전
+    private final LocalDateTime createdAt;
 
-    private UserBalance(Long userId, Long balance, LocalDateTime lastUpdatedAt, Long version) {
+    // 모든 필드를 포함한 생성자
+    private UserBalance(Long userId, Long balance, LocalDateTime lastUpdatedAt, Long version, LocalDateTime createdAt) {
         if (balance < 0) {
             throw new IllegalArgumentException("잔액은 음수가 될 수 없습니다.");
         }
@@ -17,29 +19,55 @@ public class UserBalance {
         this.balance = balance;
         this.lastUpdatedAt = lastUpdatedAt;
         this.version = version;
+        this.createdAt = createdAt;
     }
 
-    // 팩토리 메서드 - 신규 사용자 잔액 생성
+    // ID 포함 생성자
+    private UserBalance(Long userId, Long balance, LocalDateTime lastUpdatedAt, Long version, LocalDateTime createdAt, Long id) {
+        if (balance < 0) {
+            throw new IllegalArgumentException("잔액은 음수가 될 수 없습니다.");
+        }
+        this.id = id;
+        this.userId = userId;
+        this.balance = balance;
+        this.lastUpdatedAt = lastUpdatedAt;
+        this.version = version;
+        this.createdAt = createdAt;
+    }
+
+    // === 팩토리 메서드들 ===
+
+    public static UserBalance create(Long userId, Long initialBalance) {
+        LocalDateTime now = LocalDateTime.now();
+        return new UserBalance(userId, initialBalance, now, 0L, now);
+    }
+
+    public static UserBalance createWithDetails(Long userId, Long balance, LocalDateTime lastUpdatedAt,
+                                                Long version, LocalDateTime createdAt, Long id) {
+        return new UserBalance(userId, balance, lastUpdatedAt, version, createdAt, id);
+    }
+
     public static UserBalance createNew(Long userId) {
-        return new UserBalance(userId, 0L, LocalDateTime.now(), 0L);
+        LocalDateTime now = LocalDateTime.now();
+        return new UserBalance(userId, 0L, now, 0L, now);
     }
 
-    // 팩토리 메서드 - 기존 잔액으로 생성 (Infrastructure에서 사용)
     public static UserBalance of(Long userId, Long balance, LocalDateTime lastUpdatedAt, Long version) {
-        return new UserBalance(userId, balance, lastUpdatedAt, version);
+        // createdAt을 lastUpdatedAt으로 임시 설정 (Infrastructure에서 올바른 값으로 교체)
+        return new UserBalance(userId, balance, lastUpdatedAt, version, lastUpdatedAt);
     }
 
-    // 비즈니스 로직 - 충전
+    // === 비즈니스 로직 ===
+
     public UserBalance charge(Long amount) {
         if (amount <= 0) {
             throw new IllegalArgumentException("충전 금액은 0보다 커야 합니다.");
         }
 
         Long newBalance = this.balance + amount;
-        return new UserBalance(this.userId, newBalance, LocalDateTime.now(), this.version + 1);
+        return new UserBalance(this.userId, newBalance, LocalDateTime.now(), this.version + 1, this.createdAt, this.id);
     }
 
-    // 비즈니스 로직 - 차감
     public UserBalance deduct(Long amount) {
         if (amount <= 0) {
             throw new IllegalArgumentException("차감 금액은 0보다 커야 합니다.");
@@ -50,23 +78,30 @@ public class UserBalance {
         }
 
         Long newBalance = this.balance - amount;
-        return new UserBalance(this.userId, newBalance, LocalDateTime.now(), this.version + 1);
+        return new UserBalance(this.userId, newBalance, LocalDateTime.now(), this.version + 1, this.createdAt, this.id);
     }
 
-    // 비즈니스 로직 - 차감 가능 여부 확인
+    public UserBalance deductBalance(Long amount) {
+        return deduct(amount); // 기존 deduct 메서드 재사용
+    }
+
+    public UserBalance chargeBalance(Long amount) {
+        return charge(amount); // 기존 charge 메서드 재사용
+    }
+
     public boolean canDeduct(Long amount) {
         return this.balance >= amount;
     }
 
-    // ID 할당 (Infrastructure 레이어에서만 사용)
-    void assignId(Long id) {
+    public void assignId(Long id) {
         this.id = id;
     }
 
-    // Getters
+    // === Getters ===
     public Long getId() { return id; }
     public Long getUserId() { return userId; }
     public Long getBalance() { return balance; }
     public LocalDateTime getLastUpdatedAt() { return lastUpdatedAt; }
     public Long getVersion() { return version; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
 }

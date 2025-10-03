@@ -1,8 +1,13 @@
 package kr.hhplus.be.server.infrastructure.persistence;
 
 import kr.hhplus.be.server.domain.model.Seat;
+import kr.hhplus.be.server.domain.model.SeatStatus;
 import kr.hhplus.be.server.domain.port.out.SeatRepository;
 import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Component
 public class SeatRepositoryImpl implements SeatRepository {
@@ -30,7 +35,33 @@ public class SeatRepositoryImpl implements SeatRepository {
     }
 
     @Override
+    public List<Seat> findByConcertIdAndDateTime(Long concertId, LocalDateTime dateTime) {
+        // 임시로 빈 리스트 반환 또는 모든 좌석 조회 후 필터링
+        return jpaRepository.findAll()
+                .stream()
+                .filter(entity -> entity.getConcertId().equals(concertId))
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public long countByStatusAndConcertIdAndDateTime(SeatStatus status, Long concertId, LocalDateTime dateTime) {
+        SeatEntity.SeatStatus entityStatus = SeatEntity.SeatStatus.valueOf(status.name());
+
+        return jpaRepository.findAll()
+                .stream()
+                .filter(entity -> entity.getConcertId().equals(concertId) &&
+                        entity.getStatus().equals(entityStatus))
+                .count();
+    }
+
+    @Override
     public boolean existsByConcertIdAndSeatNumberAndStatus(Long concertId, int seatNumber, Seat.SeatStatus status) {
+        return false;
+    }
+
+    @Override
+    public boolean existsByConcertIdAndSeatNumberAndStatus(Long concertId, int seatNumber, SeatStatus status) {
         SeatEntity.SeatStatus entityStatus = SeatEntity.SeatStatus.valueOf(status.name());
         return jpaRepository.existsByConcertIdAndSeatNumberAndStatus(concertId, seatNumber, entityStatus);
     }

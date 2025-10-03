@@ -4,6 +4,11 @@ import kr.hhplus.be.server.application.service.SeatReservationService;
 import kr.hhplus.be.server.domain.model.*;
 import kr.hhplus.be.server.domain.repository.*;
 import kr.hhplus.be.server.domain.port.out.UserRepository;
+import kr.hhplus.be.server.infrastructure.persistence.ConcertJpaRepository;
+import kr.hhplus.be.server.infrastructure.persistence.PaymentJpaRepository;
+import kr.hhplus.be.server.infrastructure.persistence.SeatReservationJpaRepository;
+import kr.hhplus.be.server.infrastructure.persistence.UserJpaRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -11,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -28,11 +34,18 @@ public class ConcurrentSeatReservationTest {
     @Autowired private SeatReservationService seatReservationService;
     @Autowired private UserRepository userRepository;
     @Autowired private ConcertRepository concertRepository;
+    @Autowired private ConcertDateRepository concertDateRepository;
     @Autowired private SeatReservationRepository seatReservationRepository;
     @Autowired private PaymentRepository paymentRepository;
 
+    @Autowired private UserJpaRepository userJpaRepository;
+    @Autowired private ConcertJpaRepository concertJpaRepository;
+    @Autowired private SeatReservationJpaRepository seatReservationJpaRepository;
+    @Autowired private PaymentJpaRepository paymentJpaRepository;
+
     private List<User> testUsers;
     private Concert testConcert;
+    private ConcertDate testConcertDate;
     private Integer seatNumber;
     private Long seatPrice;
 
@@ -45,9 +58,27 @@ public class ConcurrentSeatReservationTest {
             testUsers.add(userRepository.save(user));
         }
 
-        testConcert = Concert.create("핫한 콘서트", "인기 가수",
-                LocalDateTime.now().plusDays(30), 1, 200000);
+        // 테스트 콘서트 생성 (현재 구현된 도메인 모델에 맞춤)
+        testConcert = Concert.create(
+                "핫한 콘서트",           // title
+                "인기 가수",            // artist
+                "서울 올림픽 경기장",     // venue
+                1,                    // totalSeats
+                200000L               // price
+        );
         testConcert = concertRepository.save(testConcert);
+
+        // 콘서트 일정 생성 (30일 후)
+        LocalDateTime concertDateTime = LocalDateTime.now().plusDays(30);
+        testConcertDate = ConcertDate.create(
+                testConcert.getId(),              // concertId
+                concertDateTime,                  // concertDateTime
+                concertDateTime.minusHours(1),   // startTime
+                concertDateTime.plusHours(3),    // endTime
+                1                                // totalSeats
+        );
+        testConcertDate.openBooking(); // 예약 가능 상태로 변경
+        testConcertDate = concertDateRepository.save(testConcertDate);
 
         seatNumber = 1; // 단 하나의 VIP 좌석
         seatPrice = 200000L;
@@ -58,8 +89,17 @@ public class ConcurrentSeatReservationTest {
         seatReservationRepository.save(availableSeat);
     }
 
+    @AfterEach
+    void tearDown() {
+        // 생성된 데이터의 역순으로 삭제하는 것이 FK 제약조건 위반을 피하는 안전한 방법입니다.
+        paymentJpaRepository.deleteAllInBatch();
+        seatReservationJpaRepository.deleteAllInBatch();
+        concertJpaRepository.deleteAllInBatch();
+        userJpaRepository.deleteAllInBatch();
+    }
+
     @Test
-    @DisplayName("동시성 테스트: 10명이 동시 예약+결제 시도, DB 제약으로 1명만 성공")
+    @DisplayName("동시성 테스트: 10명이 동시 예약 + 결제 시도, DB 제약으로 1명만 성공")
     void shouldAllowOnlyOneSuccessInConcurrentReservationWithPayment() throws InterruptedException {
         // Given
         int threadCount = 10;
@@ -72,7 +112,7 @@ public class ConcurrentSeatReservationTest {
         AtomicInteger failureCount = new AtomicInteger(0);
         List<Exception> exceptions = new CopyOnWriteArrayList<>();
 
-        // When: 10명이 정확히 동시에 예약+결제 시도
+        // When: 10명이 정확히 동시에 예약 + 결제 시도
         for (int i = 0; i < threadCount; i++) {
             final int userIndex = i;
             final User currentUser = testUsers.get(userIndex);
@@ -87,7 +127,7 @@ public class ConcurrentSeatReservationTest {
                             testConcert.getId(), seatNumber, currentUser.getId());
 
                     reservationSuccessCount.incrementAndGet();
-                    System.out.println("✅ User " + userIndex + " 좌석 예약 성공!");
+                    System.out.println("User " + userIndex + " 좌석 예약 성공!");
 
                     // 2단계: 결제 생성 및 처리 (동시성 제어 2차)
                     String idempotencyKey = "concurrent-payment-" + userIndex + "-" + UUID.randomUUID();
@@ -110,24 +150,24 @@ public class ConcurrentSeatReservationTest {
                             testConcert.getId(), seatNumber, currentUser.getId());
 
                     paymentSuccessCount.incrementAndGet();
-                    System.out.println("💳 User " + userIndex + " 결제 완료 성공!");
+                    System.out.println("User " + userIndex + " 결제 완료 성공!");
 
                 } catch (IllegalStateException e) {
                     // 이미 예약된 좌석 또는 비즈니스 로직 오류
                     failureCount.incrementAndGet();
-                    System.out.println("❌ User " + userIndex + " 비즈니스 로직 실패: " + e.getMessage());
+                    System.out.println("User " + userIndex + " 비즈니스 로직 실패: " + e.getMessage());
 
                 } catch (DataIntegrityViolationException e) {
                     // DB 제약 위반 (UNIQUE, FK 등)
                     exceptions.add(e);
                     failureCount.incrementAndGet();
-                    System.out.println("🚫 User " + userIndex + " DB 제약 위반: " + e.getMessage());
+                    System.out.println("User " + userIndex + " DB 제약 위반: " + e.getMessage());
 
                 } catch (Exception e) {
                     // 기타 예외
                     exceptions.add(e);
                     failureCount.incrementAndGet();
-                    System.out.println("💥 User " + userIndex + " 예상치 못한 오류: " + e.getMessage());
+                    System.out.println("User " + userIndex + " 예상치 못한 오류: " + e.getMessage());
 
                 } finally {
                     completeLatch.countDown();
@@ -214,11 +254,11 @@ public class ConcurrentSeatReservationTest {
                     paymentRepository.save(payment);
                     successCount.incrementAndGet();
 
-                    System.out.println("💳 Attempt " + attemptIndex + " 결제 성공!");
+                    System.out.println("Attempt " + attemptIndex + " 결제 성공!");
 
                 } catch (Exception e) {
                     failureCount.incrementAndGet();
-                    System.out.println("❌ Attempt " + attemptIndex + " 결제 실패: " + e.getMessage());
+                    System.out.println("Attempt " + attemptIndex + " 결제 실패: " + e.getMessage());
 
                 } finally {
                     completeLatch.countDown();
@@ -244,4 +284,62 @@ public class ConcurrentSeatReservationTest {
 
         System.out.println("멱등성 테스트 완료: 성공 " + successCount.get() + ", 실패 " + failureCount.get());
     }
+
+    @Test
+    @DisplayName("좌석 예약 동시성 테스트: 비관적 락으로 1명만 성공")
+    void shouldAllowOnlyOneReservationWithPessimisticLock() throws InterruptedException {
+        // Given
+        int threadCount = 5;
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch completeLatch = new CountDownLatch(threadCount);
+
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failureCount = new AtomicInteger(0);
+
+        // When: 5명이 동시에 같은 좌석 예약 시도
+        for (int i = 0; i < threadCount; i++) {
+            final int userIndex = i;
+            final User currentUser = testUsers.get(userIndex);
+
+            executorService.submit(() -> {
+                try {
+                    startLatch.await();
+
+                    // 좌석 예약 시도 (FOR UPDATE 락 사용)
+                    SeatReservation reservedSeat = seatReservationService.reserveSeatTemporarily(
+                            testConcert.getId(), seatNumber, currentUser.getId());
+
+                    successCount.incrementAndGet();
+                    System.out.println("User " + userIndex + " 좌석 예약 성공");
+
+                } catch (Exception e) {
+                    failureCount.incrementAndGet();
+                    System.out.println("User " + userIndex + " 좌석 예약 실패: " + e.getMessage());
+
+                } finally {
+                    completeLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        completeLatch.await();
+        executorService.shutdown();
+
+        // Then: 정확히 1명만 성공
+        assertThat(successCount.get()).isEqualTo(1);
+        assertThat(failureCount.get()).isEqualTo(4);
+
+        // 최종 좌석 상태 확인
+        SeatReservation finalSeat = seatReservationRepository
+                .findByConcertIdAndSeatNumber(testConcert.getId(), seatNumber)
+                .orElseThrow();
+
+        assertThat(finalSeat.getStatus()).isEqualTo(SeatStatus.RESERVED);
+        assertThat(finalSeat.getUserId()).isNotNull();
+
+        System.out.println("비관적 락 테스트 완료: 성공 " + successCount.get() + ", 실패 " + failureCount.get());
+    }
+
 }

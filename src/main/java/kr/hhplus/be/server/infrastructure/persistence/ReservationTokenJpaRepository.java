@@ -1,6 +1,15 @@
 package kr.hhplus.be.server.infrastructure.persistence;
 
+import kr.hhplus.be.server.domain.model.TokenStatus;
+import kr.hhplus.be.server.infrastructure.persistence.entity.ReservationTokenEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 
 public interface ReservationTokenJpaRepository extends JpaRepository<ReservationTokenEntity, Long> {
 
@@ -31,6 +40,4 @@ public interface ReservationTokenJpaRepository extends JpaRepository<Reservation
     // 대기 번호의 최댓값 조회
     @Query("SELECT COALESCE(MAX(t.waitingNumber), 0) FROM ReservationTokenEntity t WHERE t.status = 'WAITING'")
     Long findMaxWaitingNumber();
-
-    long countActiveTokens(LocalDateTime now);
 }

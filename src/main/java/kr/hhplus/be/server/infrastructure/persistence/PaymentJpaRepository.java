@@ -34,11 +34,13 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentEntity, Long>
 
     // 실패한 결제 재시도용 조회
     @Query("""
-        SELECT p FROM PaymentEntity p 
-        WHERE p.status = 'FAILED' 
-        AND p.createdAt < :beforeDate 
-        ORDER BY p.createdAt ASC
-        """)
+
+            SELECT p FROM PaymentEntity p
+            WHERE p.status = 'FAILED'
+            AND p.createdAt < :beforeDate
+            ORDER BY p.createdAt ASC
+        """
+            )
     List<PaymentEntity> findFailedPaymentsForRetry(@Param("beforeDate") LocalDateTime beforeDate);
 
     // 통계 조회
@@ -70,5 +72,12 @@ public interface PaymentJpaRepository extends JpaRepository<PaymentEntity, Long>
     List<Object[]> getPaymentStatistics(
             @Param("startDate") LocalDateTime startDate,
             @Param("endDate") LocalDateTime endDate
-    );
+    )
+
+    ;
+    /**
+     * 예약 ID와 멱등성 키로 결제 조회 (중복 결제 방지용)
+     */
+    Optional<PaymentEntity> findByReservationIdAndIdempotencyKey(Long reservationId, String idempotencyKey);
+
 }

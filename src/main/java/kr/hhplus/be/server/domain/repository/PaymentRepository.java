@@ -41,4 +41,5 @@ public interface PaymentRepository {
             LocalDateTime startDate,
             LocalDateTime endDate
     );
-}
+
+    Optional<Payment> findByReservationIdAndIdempotencyKey(Long reservationId, String idempotencyKey);}

@@ -23,21 +23,21 @@ public class ReserveSeatService implements ReserveSeatUseCase {
     public Reservation reserve(ReserveSeatCommand command) {
         // 1. 좌석 조회 및 예약 가능 확인
         Seat seat = seatRepository.findByConcertIdAndSeatNumber(
-                command.getConcertId(), command.getSeatNumber());
+                command.concertId(), command.seatNumber());
 
         if (!seat.isAvailable()) {
             throw new IllegalStateException("이미 예약된 좌석입니다.");
         }
 
         // 2. 좌석 상태 변경 (예약됨으로)
-        Seat reservedSeat = seat.reserve(command.getUserId());
+        Seat reservedSeat = seat.reserve(command.userId());
         seatRepository.save(reservedSeat);
 
         // 3. 예약 생성 (가격은 콘서트 정보에서 가져와야 하지만 여기서는 임시로 150000 설정)
         Reservation reservation = Reservation.create(
-                command.getUserId(),
-                command.getConcertId(),
-                command.getSeatNumber(),
+                command.userId(),
+                command.concertId(),
+                command.seatNumber(),
                 150000L
         );
 

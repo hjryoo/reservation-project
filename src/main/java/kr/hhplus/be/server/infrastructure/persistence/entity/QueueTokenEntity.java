@@ -64,7 +64,7 @@ public class QueueTokenEntity {
     public LocalDateTime getExpiresAt() { return expiresAt; }
 
     public Integer getPosition() {
-        return null;
+        return position;
     }
     public LocalDateTime getEnteredAt() { return enteredAt; }
 

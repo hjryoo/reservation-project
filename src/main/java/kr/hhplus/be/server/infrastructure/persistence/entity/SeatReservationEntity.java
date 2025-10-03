@@ -75,6 +75,7 @@ public class SeatReservationEntity {
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
 
+    public void setId(Long id) { this.id = id; }
     public void setUserId(Long userId) { this.userId = userId; }
     public void setStatus(SeatStatus status) { this.status = status; }
     public void setReservedAt(LocalDateTime reservedAt) { this.reservedAt = reservedAt; }

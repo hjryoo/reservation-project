@@ -3,7 +3,13 @@ package kr.hhplus.be.server.domain.model;
 import java.time.LocalDateTime;
 
 public class Payment {
-    private Long id;
+    // ===== 기술적 필드 (Infrastructure에서 관리) =====
+    private Long id;                    // mutable - DB에서 자동 생성
+    private LocalDateTime createdAt;    // mutable - DB에서 자동 생성
+    private LocalDateTime updatedAt;    // mutable - DB에서 자동 업데이트
+    private Long version;               // mutable - 낙관적 락용
+
+    // ===== 비즈니스 필드 (불변성 보장) =====
     private final Long reservationId;
     private final Long userId;
     private final Long amount;
@@ -18,10 +24,10 @@ public class Payment {
         PENDING, COMPLETED, FAILED
     }
 
-    private Payment(Long id, Long reservationId, Long userId, Long amount,
+    // ===== 메인 생성자 =====
+    private Payment(Long reservationId, Long userId, Long amount,
                     PaymentStatus status, LocalDateTime paidAt, String idempotencyKey,
                     String paymentMethod, String transactionId, String failureReason) {
-        this.id = id;
         this.reservationId = reservationId;
         this.userId = userId;
         this.amount = amount;
@@ -31,72 +37,66 @@ public class Payment {
         this.paymentMethod = paymentMethod;
         this.transactionId = transactionId;
         this.failureReason = failureReason;
+        // 기술적 필드는 null로 초기화 (Infrastructure에서 설정)
+        this.id = null;
+        this.createdAt = null;
+        this.updatedAt = null;
+        this.version = null;
     }
 
+    // ===== 팩토리 메서드들 =====
     public static Payment create(Long reservationId, Long userId, Long amount) {
         return new Payment(
-                null,                    // id
-                reservationId,          // reservationId
-                userId,                 // userId
-                amount,                 // amount
-                PaymentStatus.PENDING,  // status
-                LocalDateTime.now(),    // paidAt
-                null,                   // idempotencyKey
-                "DEFAULT",              // paymentMethod
-                null,                   // transactionId
-                null                    // failureReason
+                reservationId, userId, amount,
+                PaymentStatus.PENDING, LocalDateTime.now(),
+                null, "DEFAULT", null, null
         );
     }
 
     public static Payment createPending(Long userId, Long amount,
                                         String paymentMethod, String idempotencyKey) {
         return new Payment(
-                null,                    // id
-                null,                    // reservationId
-                userId,                  // userId
-                amount,                  // amount
-                PaymentStatus.PENDING,   // status
-                LocalDateTime.now(),     // paidAt
-                idempotencyKey,          // idempotencyKey
-                paymentMethod,           // paymentMethod
-                null,                    // transactionId
-                null                     // failureReason
+                null, userId, amount,
+                PaymentStatus.PENDING, LocalDateTime.now(),
+                idempotencyKey, paymentMethod, null, null
         );
     }
 
     public static Payment createWithReservation(Long reservationId, Long userId, Long amount,
                                                 String paymentMethod, String idempotencyKey) {
         return new Payment(
-                null,                    // id
-                reservationId,           // reservationId
-                userId,                  // userId
-                amount,                  // amount
-                PaymentStatus.PENDING,   // status
-                LocalDateTime.now(),     // paidAt
-                idempotencyKey,          // idempotencyKey
-                paymentMethod,           // paymentMethod
-                null,                    // transactionId
-                null                     // failureReason
+                reservationId, userId, amount,
+                PaymentStatus.PENDING, LocalDateTime.now(),
+                idempotencyKey, paymentMethod, null, null
         );
     }
 
+    public static Payment createWithIdempotency(Long reservationId, Long userId, Long amount, String idempotencyKey) {
+        return new Payment(
+                reservationId, userId, amount,
+                PaymentStatus.PENDING, LocalDateTime.now(),
+                idempotencyKey, "DEFAULT", null, null
+        );
+    }
+
+    // ===== 비즈니스 규칙: 결제 완료 =====
     public Payment complete() {
         if (this.status != PaymentStatus.PENDING) {
             throw new IllegalStateException("PENDING 상태의 결제만 완료할 수 있습니다.");
         }
 
-        return new Payment(
-                this.id,                 // id 유지
-                this.reservationId,      // reservationId 유지
-                this.userId,             // userId 유지
-                this.amount,             // amount 유지
-                PaymentStatus.COMPLETED, // status 변경
-                LocalDateTime.now(),     // paidAt 업데이트
-                this.idempotencyKey,     // idempotencyKey 유지
-                this.paymentMethod,      // paymentMethod 유지
-                null,                    // transactionId (기존 버전에서는 null)
-                null                     // failureReason
+        Payment completed = new Payment(
+                this.reservationId, this.userId, this.amount,
+                PaymentStatus.COMPLETED, LocalDateTime.now(),
+                this.idempotencyKey, this.paymentMethod, null, null
         );
+
+        // 기술적 필드 복사
+        completed.id = this.id;
+        completed.createdAt = this.createdAt;
+        completed.version = this.version;
+
+        return completed;
     }
 
     public Payment complete(String transactionId) {
@@ -104,18 +104,18 @@ public class Payment {
             throw new IllegalStateException("PENDING 상태의 결제만 완료할 수 있습니다.");
         }
 
-        return new Payment(
-                this.id,                 // id 유지
-                this.reservationId,      // reservationId 유지
-                this.userId,             // userId 유지
-                this.amount,             // amount 유지
-                PaymentStatus.COMPLETED, // status 변경
-                LocalDateTime.now(),     // paidAt 업데이트
-                this.idempotencyKey,     // idempotencyKey 유지
-                this.paymentMethod,      // paymentMethod 유지
-                transactionId,           // transactionId 설정
-                null                     // failureReason
+        Payment completed = new Payment(
+                this.reservationId, this.userId, this.amount,
+                PaymentStatus.COMPLETED, LocalDateTime.now(),
+                this.idempotencyKey, this.paymentMethod, transactionId, null
         );
+
+        // 기술적 필드 복사
+        completed.id = this.id;
+        completed.createdAt = this.createdAt;
+        completed.version = this.version;
+
+        return completed;
     }
 
     public Payment fail(String failureReason) {
@@ -123,69 +123,48 @@ public class Payment {
             throw new IllegalStateException("PENDING 상태의 결제만 실패 처리할 수 있습니다.");
         }
 
-        return new Payment(
-                this.id,                // id 유지
-                this.reservationId,     // reservationId 유지
-                this.userId,            // userId 유지
-                this.amount,            // amount 유지
-                PaymentStatus.FAILED,   // status 변경
-                this.paidAt,            // paidAt 유지 (실패 시 원본 시간 보존)
-                this.idempotencyKey,    // idempotencyKey 유지
-                this.paymentMethod,     // paymentMethod 유지
-                this.transactionId,     // transactionId 유지
-                failureReason           // failureReason 설정
+        Payment failed = new Payment(
+                this.reservationId, this.userId, this.amount,
+                PaymentStatus.FAILED, this.paidAt,
+                this.idempotencyKey, this.paymentMethod, this.transactionId, failureReason
         );
+
+        // 기술적 필드 복사
+        failed.id = this.id;
+        failed.createdAt = this.createdAt;
+        failed.version = this.version;
+
+        return failed;
     }
 
+    // ===== Infrastructure 계층 전용 메서드 =====
+    /**
+     * Infrastructure 계층에서만 호출하는 ID 할당 메서드
+     * 도메인 로직에서는 절대 호출하지 않음
+     */
     public void assignId(Long id) {
-        // reflection을 사용하여 final 필드에 값 할당하거나
-        // 새로운 객체를 생성하여 반환하는 방식으로 구현
-        if (this.id == null) {
-            try {
-                java.lang.reflect.Field idField = this.getClass().getDeclaredField("id");
-                idField.setAccessible(true);
-                idField.set(this, id);
-            } catch (Exception e) {
-                throw new RuntimeException("ID 할당 실패", e);
-            }
+        if (this.id != null) {
+            throw new IllegalStateException("ID가 이미 할당되어 있습니다: " + this.id);
         }
+        this.id = id;
     }
 
-    // ===== ID가 포함된 새 객체 생성 (더 안전한 방법) =====
-    public Payment withId(Long id) {
-        return new Payment(
-                id,                     // 새 id
-                this.reservationId,     // 기존 값들 유지
-                this.userId,
-                this.amount,
-                this.status,
-                this.paidAt,
-                this.idempotencyKey,
-                this.paymentMethod,
-                this.transactionId,
-                this.failureReason
-        );
+    /**
+     * Infrastructure 계층에서만 호출하는 기술적 필드 설정
+     */
+    public void assignTechnicalFields(Long id, LocalDateTime createdAt, LocalDateTime updatedAt, Long version) {
+        this.id = id;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+        this.version = version;
     }
 
-    public boolean isPending() {
-        return this.status == PaymentStatus.PENDING;
-    }
-
-    public boolean isCompleted() {
-        return this.status == PaymentStatus.COMPLETED;
-    }
-
-    public boolean isFailed() {
-        return this.status == PaymentStatus.FAILED;
-    }
-
-    public boolean canBeCompleted() {
-        return this.status == PaymentStatus.PENDING;
-    }
-
-    public boolean canBeRetried() {
-        return this.status == PaymentStatus.FAILED;
-    }
+    // ===== 비즈니스 규칙 검증 메서드 =====
+    public boolean isPending() { return this.status == PaymentStatus.PENDING; }
+    public boolean isCompleted() { return this.status == PaymentStatus.COMPLETED; }
+    public boolean isFailed() { return this.status == PaymentStatus.FAILED; }
+    public boolean canBeCompleted() { return this.status == PaymentStatus.PENDING; }
+    public boolean canBeRetried() { return this.status == PaymentStatus.FAILED; }
 
     // ===== Getters =====
     public Long getId() { return id; }
@@ -198,6 +177,11 @@ public class Payment {
     public String getPaymentMethod() { return paymentMethod; }
     public String getTransactionId() { return transactionId; }
     public String getFailureReason() { return failureReason; }
+
+    // 기술적 필드 Getters
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public Long getVersion() { return version; }
 
     @Override
     public String toString() {

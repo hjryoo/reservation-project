@@ -34,11 +34,17 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-web")
+	implementation("org.springframework.boot:spring-boot-starter-validation")
 
-    // DB
+	// DB
 	runtimeOnly("com.mysql:mysql-connector-j")
 
     // Test
+	// 테스트용 H2 데이터베이스
+	testImplementation("com.h2database:h2")
+
+	// Spring Boot Test
+	testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.boot:spring-boot-testcontainers")
 	testImplementation("org.testcontainers:junit-jupiter")
