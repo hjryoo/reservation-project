@@ -5,9 +5,11 @@ import kr.hhplus.be.server.domain.repository.UserBalanceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 @Service("concurrencyUserBalanceService")
 public class ConcurrencyUserBalanceService {
@@ -75,22 +77,16 @@ public class ConcurrencyUserBalanceService {
     /**
      * 전략 3: 낙관적 락을 사용한 잔액 차감 (지수 백오프 재시도 로직 포함)
      * 충돌률이 낮을 때 효과적
+     *
+     * 재시도는 트랜잭션 밖에서 수행하여 DB 커넥션 점유 시간 최소화
      */
-    @Transactional
     public UserBalance deductBalanceWithOptimisticLock(Long userId, Long amount) {
         return deductBalanceWithOptimisticLockRetry(userId, amount, 5);
     }
 
     /**
-     * 낙관적 락 재시도 로직 (지수 백오프 적용)
-     *
-     * @param userId 사용자 ID
-     * @param amount 차감할 금액
-     * @param maxRetries 최대 재시도 횟수
-     * @return 차감 후 잔액 정보
-     *
-     * 대기 시간: 1ms -> 2ms -> 4ms -> 8ms -> 16ms
-     * 이론적 최대 대기 시간: 31ms (1+2+4+8+16)
+     * 낙관적 락 재시도 로직 (트랜잭션 밖에서 실행)
+     * 각 시도마다 새로운 트랜잭션 생성
      */
     private UserBalance deductBalanceWithOptimisticLockRetry(Long userId, Long amount, int maxRetries) {
         // 파라미터 검증
@@ -98,66 +94,80 @@ public class ConcurrencyUserBalanceService {
             throw new IllegalArgumentException("차감할 금액은 0보다 커야 합니다.");
         }
 
-        int baseDelayMs = 1; // 초기 대기 시간 1ms
+        int baseDelayMs = 1;
 
         for (int attempt = 0; attempt < maxRetries; attempt++) {
             try {
-                // 현재 잔액 정보 조회
-                UserBalance currentBalance = userBalanceRepository.findByUserId(userId)
-                        .orElseThrow(() -> new IllegalArgumentException("사용자 잔액 정보를 찾을 수 없습니다."));
+                // 각 시도마다 새로운 트랜잭션으로 실행
+                return attemptDeductBalance(userId, amount, attempt);
 
-                // 잔액 부족 체크
-                if (!currentBalance.canDeduct(amount)) {
-                    throw new IllegalStateException("잔액이 부족합니다. 현재 잔액: " +
-                            currentBalance.getBalance() + ", 차감 요청: " + amount);
-                }
-
-                // 낙관적 락으로 차감 시도
-                boolean success = userBalanceRepository.deductBalanceWithOptimisticLock(
-                        userId, amount, currentBalance.getVersion()
-                );
-
-                if (success) {
-                    // 성공 시 최신 정보 반환
-                    logger.debug("낙관적 락 차감 성공. userId: {}, attempt: {}", userId, attempt + 1);
-                    return userBalanceRepository.findByUserId(userId)
-                            .orElseThrow(() -> new IllegalStateException("차감 후 잔액 정보를 조회할 수 없습니다."));
-                }
-
-                // 실패 시 지수 백오프 적용하여 재시도
+            } catch (OptimisticLockException e) {
+                // 낙관적 락 충돌 발생
                 if (attempt < maxRetries - 1) {
                     long delayMs = calculateExponentialBackoff(baseDelayMs, attempt);
                     logger.debug("낙관적 락 충돌 발생. userId: {}, attempt: {}, 대기 시간: {}ms",
                             userId, attempt + 1, delayMs);
 
-                    Thread.sleep(delayMs);
+                    // LockSupport.parkNanos 사용 (Thread.sleep 대체)
+                    parkNanos(TimeUnit.MILLISECONDS.toNanos(delayMs));
+                } else {
+                    logger.warn("낙관적 락 재시도 횟수 초과. userId: {}, maxRetries: {}", userId, maxRetries);
+                    throw new RuntimeException("낙관적 락 재시도 횟수 초과. 동시성이 너무 높습니다.");
                 }
-
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logger.error("낙관적 락 재시도 중 인터럽트 발생. userId: {}", userId, e);
-                throw new RuntimeException("재시도 중 인터럽트 발생", e);
+            } catch (IllegalStateException e) {
+                // 잔액 부족 등의 비즈니스 예외는 즉시 전파
+                throw e;
             }
         }
 
-        logger.warn("낙관적 락 재시도 횟수 초과. userId: {}, maxRetries: {}", userId, maxRetries);
-        throw new RuntimeException("낙관적 락 재시도 횟수 초과. 동시성이 너무 높습니다.");
+        throw new RuntimeException("낙관적 락 재시도 횟수 초과.");
+    }
+
+    /**
+     * 단일 트랜잭션 내에서 낙관적 락 차감 시도
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public UserBalance attemptDeductBalance(Long userId, Long amount, int attempt) {
+        // 현재 잔액 정보 조회
+        UserBalance currentBalance = userBalanceRepository.findByUserId(userId)
+                .orElseThrow(() -> new IllegalArgumentException("사용자 잔액 정보를 찾을 수 없습니다."));
+
+        // 잔액 부족 체크
+        if (!currentBalance.canDeduct(amount)) {
+            throw new IllegalStateException("잔액이 부족합니다. 현재 잔액: " +
+                    currentBalance.getBalance() + ", 차감 요청: " + amount);
+        }
+
+        // 낙관적 락으로 차감 시도
+        boolean success = userBalanceRepository.deductBalanceWithOptimisticLock(
+                userId, amount, currentBalance.getVersion()
+        );
+
+        if (!success) {
+            throw new OptimisticLockException("낙관적 락 충돌");
+        }
+
+        // 성공 시 최신 정보 반환
+        logger.debug("낙관적 락 차감 성공. userId: {}, attempt: {}", userId, attempt + 1);
+        return userBalanceRepository.findByUserId(userId)
+                .orElseThrow(() -> new IllegalStateException("차감 후 잔액 정보를 조회할 수 없습니다."));
+    }
+
+    /**
+     * Thread.sleep() 대신 LockSupport.parkNanos() 사용
+     * 더 정확한 대기 시간, 인터럽트 처리 불필요
+     */
+    private void parkNanos(long nanos) {
+        if (nanos > 0) {
+            java.util.concurrent.locks.LockSupport.parkNanos(nanos);
+        }
     }
 
     /**
      * 지수 백오프 대기 시간 계산
-     *
-     * @param baseDelayMs 기본 대기 시간 (밀리초)
-     * @param attempt 현재 시도 횟수 (0부터 시작)
-     * @return 계산된 대기 시간 (밀리초)
-     *
-     * 계산식: baseDelayMs * 2^attempt
-     * 예시: 1ms * 2^0 = 1ms, 1ms * 2^1 = 2ms, 1ms * 2^2 = 4ms
      */
     private long calculateExponentialBackoff(int baseDelayMs, int attempt) {
-        long delayMs = baseDelayMs * (1L << attempt); // 2^attempt
-
-        // 최대 대기 시간 제한 (100ms)
+        long delayMs = baseDelayMs * (1L << attempt);
         long maxDelayMs = 100;
         return Math.min(delayMs, maxDelayMs);
     }
@@ -167,39 +177,29 @@ public class ConcurrencyUserBalanceService {
      */
     @Transactional
     public UserBalance chargeBalance(Long userId, Long amount) {
-        // 파라미터 검증
         if (amount <= 0) {
             throw new IllegalArgumentException("충전할 금액은 0보다 커야 합니다.");
         }
 
-        // 사용자 잔액 정보가 없으면 초기 생성
         if (userBalanceRepository.findByUserId(userId).isEmpty()) {
             userBalanceRepository.createInitialBalanceIfNotExists(userId, 0L);
         }
 
-        // 원자적 연산으로 잔액 충전
         boolean success = userBalanceRepository.chargeBalanceConditionally(userId, amount);
 
         if (!success) {
             throw new IllegalArgumentException("사용자 잔액 정보를 찾을 수 없습니다.");
         }
 
-        // 충전 성공 후 최신 잔액 정보 조회
         return userBalanceRepository.findByUserId(userId)
                 .orElseThrow(() -> new IllegalStateException("충전 후 잔액 정보를 조회할 수 없습니다."));
     }
 
-    /**
-     * 잔액 조회
-     */
     public UserBalance getBalance(Long userId) {
         return userBalanceRepository.findByUserId(userId)
                 .orElseThrow(() -> new IllegalArgumentException("사용자 잔액 정보를 찾을 수 없습니다."));
     }
 
-    /**
-     * 잔액 초기화 (신규 사용자용)
-     */
     @Transactional
     public UserBalance createInitialBalance(Long userId, Long initialAmount) {
         if (initialAmount < 0) {
@@ -214,5 +214,14 @@ public class ConcurrencyUserBalanceService {
 
         return userBalanceRepository.findByUserId(userId)
                 .orElseThrow(() -> new IllegalStateException("생성된 잔액 정보를 조회할 수 없습니다."));
+    }
+
+    /**
+     * 낙관적 락 예외 (내부 사용)
+     */
+    private static class OptimisticLockException extends RuntimeException {
+        public OptimisticLockException(String message) {
+            super(message);
+        }
     }
 }
