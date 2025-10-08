@@ -50,6 +50,14 @@ dependencies {
 	testImplementation("org.testcontainers:junit-jupiter")
 	testImplementation("org.testcontainers:mysql")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// Redis
+	implementation("org.springframework.boot:spring-boot-starter-data-redis")
+	// Redisson
+	implementation("org.redisson:redisson-spring-boot-starter:3.25.0")
+
+	// 테스트용 Embedded Redis
+	testImplementation("it.ozimov:embedded-redis:0.7.3")
 }
 
 tasks.withType<Test> {
