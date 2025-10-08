@@ -1,6 +1,7 @@
 package kr.hhplus.be.server.domain.model;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 public class Payment {
     // ===== 기술적 필드 (Infrastructure에서 관리) =====
@@ -49,7 +50,8 @@ public class Payment {
         return new Payment(
                 reservationId, userId, amount,
                 PaymentStatus.PENDING, LocalDateTime.now(),
-                null, "DEFAULT", null, null
+                UUID.randomUUID().toString(), // ⭐ null 대신 UUID 자동 생성
+                "DEFAULT", null, null
         );
     }
 
@@ -58,7 +60,8 @@ public class Payment {
         return new Payment(
                 null, userId, amount,
                 PaymentStatus.PENDING, LocalDateTime.now(),
-                idempotencyKey, paymentMethod, null, null
+                idempotencyKey != null ? idempotencyKey : UUID.randomUUID().toString(), // ⭐ null 방어
+                paymentMethod, null, null
         );
     }
 
@@ -67,11 +70,15 @@ public class Payment {
         return new Payment(
                 reservationId, userId, amount,
                 PaymentStatus.PENDING, LocalDateTime.now(),
-                idempotencyKey, paymentMethod, null, null
+                idempotencyKey != null ? idempotencyKey : UUID.randomUUID().toString(), // ⭐ null 방어
+                paymentMethod, null, null
         );
     }
 
     public static Payment createWithIdempotency(Long reservationId, Long userId, Long amount, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new IllegalArgumentException("멱등성 키는 필수입니다.");
+        }
         return new Payment(
                 reservationId, userId, amount,
                 PaymentStatus.PENDING, LocalDateTime.now(),

@@ -158,6 +158,10 @@ public class PaymentEntity {
     public String getFailureReason() { return failureReason; }
     public void setFailureReason(String failureReason) { this.failureReason = failureReason; }
 
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
     public LocalDateTime getCreatedAt() { return createdAt; }
     // createdAt은 불변이므로 setter 제공하지 않음
 
