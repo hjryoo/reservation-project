@@ -171,4 +171,24 @@ public class PaymentRepositoryImpl implements PaymentRepository {
         return domain;
     }
 
+    @Override
+    @Transactional
+    public Payment update(Payment payment) {
+        if (payment.getId() == null) {
+            throw new IllegalArgumentException("update는 ID가 있는 Payment만 가능합니다.");
+        }
+
+        PaymentEntity entity = jpaRepository.findById(payment.getId())
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 결제입니다: " + payment.getId()));
+
+        // 엔티티 필드 업데이트
+        entity.setStatus(payment.getStatus());
+        entity.setPaidAt(payment.getPaidAt());
+        entity.setTransactionId(payment.getTransactionId());
+        entity.setFailureReason(payment.getFailureReason());
+        entity.setUpdatedAt(LocalDateTime.now());
+
+        PaymentEntity updated = jpaRepository.saveAndFlush(entity);
+        return toDomain(updated);
+    }
 }

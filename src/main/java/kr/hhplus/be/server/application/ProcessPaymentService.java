@@ -7,12 +7,23 @@ import kr.hhplus.be.server.domain.port.in.ProcessPaymentUseCase;
 import kr.hhplus.be.server.domain.port.out.*;
 import kr.hhplus.be.server.domain.repository.PaymentRepository;
 import kr.hhplus.be.server.domain.repository.SeatReservationRepository;
+import kr.hhplus.be.server.infrastructure.lock.DistributedLock;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 
+/**
+ * 결제 처리 서비스 (분산락 적용)
+ *
+ * 분산락 적용 이유:
+ * - 중복 결제 방지 (동일 예약에 대한 여러 결제 시도 차단)
+ * - 예약 확정과 잔액 차감의 원자성 보장
+ * - 분산 환경에서 결제 프로세스 일관성 유지
+ */
 @Service("processPaymentService")
+@RequiredArgsConstructor
 public class ProcessPaymentService implements ProcessPaymentUseCase {
 
     private final PaymentRepository paymentRepository;
@@ -21,39 +32,31 @@ public class ProcessPaymentService implements ProcessPaymentUseCase {
     private final ConcurrencySeatReservationService seatReservationService;
     private final SeatReservationRepository seatReservationRepository;
 
-    public ProcessPaymentService(PaymentRepository paymentRepository,
-                                 PaymentGateway paymentGateway,
-                                 ConcurrencyUserBalanceService userBalanceService,
-                                 ConcurrencySeatReservationService seatReservationService,
-                                 SeatReservationRepository seatReservationRepository) {
-        this.paymentRepository = paymentRepository;
-        this.paymentGateway = paymentGateway;
-        this.userBalanceService = userBalanceService;
-        this.seatReservationService = seatReservationService;
-        this.seatReservationRepository = seatReservationRepository;
-    }
-
     @Override
+    @DistributedLock(
+            key = "'payment:process:' + #command.reservationId",
+            waitTime = 10L,
+            leaseTime = 10L
+    )
     @Transactional
     public Payment processPayment(ProcessPaymentCommand command) {
         try {
-            // 1. 예약 정보 검증 (비관적 락 사용)
+            // 1. 예약 정보 검증
             SeatReservation reservation = seatReservationRepository
                     .findById(command.reservationId())
                     .orElseThrow(() -> new IllegalArgumentException("예약 정보를 찾을 수 없습니다."));
 
-            // 예약 상태 및 사용자 확인
             if (!reservation.canBeConfirmed(command.userId())) {
                 throw new IllegalStateException("결제할 수 없는 예약입니다. (만료되었거나 다른 사용자의 예약)");
             }
 
-            // 2. 잔액 차감 (조건부 UPDATE 사용 - 가장 안전)
+            // 2. 잔액 차감
             UserBalance updatedBalance = userBalanceService.deductBalanceWithConditionalUpdate(
                     command.userId(),
                     command.amount()
             );
 
-            // 3. 결제 객체 생성 및 저장
+            // 3. 결제 객체 생성 및 저장 (PENDING 상태)
             Payment payment = Payment.create(
                     command.reservationId(),
                     command.userId(),
@@ -72,16 +75,14 @@ public class ProcessPaymentService implements ProcessPaymentUseCase {
                         command.userId()
                 );
 
-                // 결제 완료 상태로 업데이트
-                Payment completedPayment = processedPayment.complete(processedPayment.getTransactionId());
-                return paymentRepository.save(completedPayment);
+                // ⭐ 핵심 수정: update 메서드 사용 (새로운 INSERT 방지)
+                return paymentRepository.update(processedPayment);
             } else {
-                // 6. 결제 실패 시 잔액 롤백 (충전으로 복구)
+                // 6. 결제 실패 시 잔액 롤백
                 userBalanceService.chargeBalance(command.userId(), command.amount());
 
-                // 실패한 결제 정보 저장
                 Payment failedPayment = processedPayment.fail("결제 게이트웨이 처리 실패");
-                return paymentRepository.save(failedPayment);
+                return paymentRepository.update(failedPayment);
             }
 
         } catch (Exception e) {
@@ -92,9 +93,11 @@ public class ProcessPaymentService implements ProcessPaymentUseCase {
         }
     }
 
-    /**
-     * 멱등성을 보장하는 결제 처리 (중복 결제 방지)
-     */
+    @DistributedLock(
+            key = "'payment:idempotent:' + #idempotencyKey",
+            waitTime = 10L,
+            leaseTime = 10L
+    )
     @Transactional
     public Payment processPaymentIdempotent(ProcessPaymentCommand command, String idempotencyKey) {
         // 1. 멱등성 키로 기존 결제 확인
@@ -107,7 +110,7 @@ public class ProcessPaymentService implements ProcessPaymentUseCase {
             return existingPayment.get(); // 이미 처리된 결제 반환
         }
 
-        // 2. 새로운 결제 처리 (멱등성 키 포함)
+        // 2. 새로운 결제 처리
         return processPaymentWithIdempotency(command, idempotencyKey);
     }
 
@@ -148,13 +151,12 @@ public class ProcessPaymentService implements ProcessPaymentUseCase {
                         command.userId()
                 );
 
-                Payment completedPayment = processedPayment.complete(processedPayment.getTransactionId());
-                return paymentRepository.save(completedPayment);
+                return paymentRepository.update(processedPayment);
             } else {
                 // 결제 실패 시 롤백
                 userBalanceService.chargeBalance(command.userId(), command.amount());
                 Payment failedPayment = processedPayment.fail("결제 게이트웨이 처리 실패");
-                return paymentRepository.save(failedPayment);
+                return paymentRepository.update(failedPayment);
             }
 
         } catch (Exception e) {
