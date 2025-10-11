@@ -4,6 +4,7 @@ import kr.hhplus.be.server.domain.model.SeatReservation;
 import kr.hhplus.be.server.domain.model.SeatStatus;
 import kr.hhplus.be.server.domain.repository.SeatReservationRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -67,7 +68,7 @@ public class ConcurrencySeatReservationService {
     /**
      * 좌석 예약 확정 (결제 완료 시)
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public SeatReservation confirmSeatReservation(Long concertId, Integer seatNumber, Long userId) {
         // 조건부 UPDATE로 안전하게 확정
         int updatedRows = seatReservationRepository.confirmSeatConditionally(concertId, seatNumber, userId);
