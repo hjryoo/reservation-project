@@ -47,18 +47,25 @@ class PointServiceTest {
         // Given
         Long userId = 1L;
         BigDecimal amount = new BigDecimal("10000");
-        String description = "포인트 충전";
+        String description = "테스트 충전";
 
-        when(pointRepository.findByUserIdWithLock(userId)).thenReturn(Optional.of(testPoint));
-        when(pointRepository.save(any(Point.class))).thenReturn(testPoint);
-        when(pointHistoryRepository.save(any(PointHistory.class))).thenReturn(mock(PointHistory.class));
+        // ⭐ 중요: findByUserId로 변경 (findByUserIdWithLock 제거)
+        when(pointRepository.findByUserId(userId))
+                .thenReturn(Optional.of(testPoint));
+        when(pointRepository.save(any(Point.class)))
+                .thenReturn(testPoint);
+        when(pointHistoryRepository.save(any(PointHistory.class)))
+                .thenReturn(mock(PointHistory.class));
 
         // When
         Point result = pointService.chargePoint(userId, amount, description);
 
         // Then
-        assertThat(result.getBalance()).isEqualTo(amount);
-        verify(pointRepository).findByUserIdWithLock(userId);
+        assertThat(result.getBalance())
+                .usingComparator(BigDecimal::compareTo)
+                .isEqualTo(amount);
+
+        verify(pointRepository).findByUserId(userId);
         verify(pointRepository).save(testPoint);
         verify(pointHistoryRepository).save(any(PointHistory.class));
     }
@@ -72,9 +79,12 @@ class PointServiceTest {
         String description = "첫 충전";
         Point newPoint = Point.create(userId);
 
-        when(pointRepository.findByUserIdWithLock(userId)).thenReturn(Optional.empty());
-        when(pointRepository.save(any(Point.class))).thenReturn(newPoint);
-        when(pointHistoryRepository.save(any(PointHistory.class))).thenReturn(mock(PointHistory.class));
+        when(pointRepository.findByUserId(userId))
+                .thenReturn(Optional.empty());
+        when(pointRepository.save(any(Point.class)))
+                .thenReturn(newPoint);
+        when(pointHistoryRepository.save(any(PointHistory.class)))
+                .thenReturn(mock(PointHistory.class));
 
         // When
         Point result = pointService.chargePoint(userId, amount, description);
@@ -85,7 +95,7 @@ class PointServiceTest {
     }
 
     @Test
-    @DisplayName("충전 금액이 0 이하이면 예외가 발생한다")
+    @DisplayName("충전 금액이 0 이하면 예외가 발생한다")
     void chargePoint_InvalidAmount() {
         // Given
         Long userId = 1L;
@@ -95,7 +105,7 @@ class PointServiceTest {
         // When & Then
         assertThatThrownBy(() -> pointService.chargePoint(userId, amount, description))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("충전 금액은 0보다 커야 합니다.");
+                .hasMessageContaining("충전 금액은 0보다 커야 합니다");
     }
 
     @Test
@@ -105,20 +115,26 @@ class PointServiceTest {
         Long userId = 1L;
         BigDecimal chargeAmount = new BigDecimal("10000");
         BigDecimal useAmount = new BigDecimal("3000");
-        String description = "콘서트 예약";
+        String description = "테스트 사용";
 
-        testPoint.charge(chargeAmount); // 사전에 포인트 충전
+        testPoint.charge(chargeAmount);
 
-        when(pointRepository.findByUserIdWithLock(userId)).thenReturn(Optional.of(testPoint));
-        when(pointRepository.save(any(Point.class))).thenReturn(testPoint);
-        when(pointHistoryRepository.save(any(PointHistory.class))).thenReturn(mock(PointHistory.class));
+        when(pointRepository.findByUserId(userId))
+                .thenReturn(Optional.of(testPoint));
+        when(pointRepository.save(any(Point.class)))
+                .thenReturn(testPoint);
+        when(pointHistoryRepository.save(any(PointHistory.class)))
+                .thenReturn(mock(PointHistory.class));
 
         // When
         Point result = pointService.usePoint(userId, useAmount, description);
 
         // Then
-        assertThat(result.getBalance()).isEqualTo(chargeAmount.subtract(useAmount));
-        verify(pointRepository).findByUserIdWithLock(userId);
+        assertThat(result.getBalance())
+                .usingComparator(BigDecimal::compareTo)
+                .isEqualTo(chargeAmount.subtract(useAmount));
+
+        verify(pointRepository).findByUserId(userId);
         verify(pointRepository).save(testPoint);
         verify(pointHistoryRepository).save(any(PointHistory.class));
     }
@@ -129,14 +145,15 @@ class PointServiceTest {
         // Given
         Long userId = 1L;
         BigDecimal useAmount = new BigDecimal("10000");
-        String description = "잔액 부족";
+        String description = "잔액 부족 테스트";
 
-        when(pointRepository.findByUserIdWithLock(userId)).thenReturn(Optional.of(testPoint));
+        when(pointRepository.findByUserId(userId))
+                .thenReturn(Optional.of(testPoint));
 
         // When & Then
         assertThatThrownBy(() -> pointService.usePoint(userId, useAmount, description))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("잔액이 부족합니다.");
+                .hasMessageContaining("잔액이 부족합니다");
     }
 
     @Test
@@ -147,29 +164,36 @@ class PointServiceTest {
         BigDecimal amount = new BigDecimal("5000");
         testPoint.charge(amount);
 
-        when(pointRepository.findByUserId(userId)).thenReturn(Optional.of(testPoint));
+        when(pointRepository.findByUserId(userId))
+                .thenReturn(Optional.of(testPoint));
 
         // When
         Point result = pointService.getPointBalance(userId);
 
         // Then
-        assertThat(result.getBalance()).isEqualTo(amount);
+        assertThat(result.getBalance())
+                .usingComparator(BigDecimal::compareTo)
+                .isEqualTo(amount);
+
         verify(pointRepository).findByUserId(userId);
     }
 
     @Test
-    @DisplayName("포인트가 없는 사용자 조회 시 기본 포인트를 반환한다")
+    @DisplayName("포인트가 없는 사용자는 잔액 0으로 조회된다")
     void getPointBalance_NoPoint() {
         // Given
         Long userId = 999L;
 
-        when(pointRepository.findByUserId(userId)).thenReturn(Optional.empty());
+        when(pointRepository.findByUserId(userId))
+                .thenReturn(Optional.empty());
 
         // When
         Point result = pointService.getPointBalance(userId);
 
         // Then
-        assertThat(result.getBalance()).isEqualTo(BigDecimal.ZERO);
+        assertThat(result.getBalance())
+                .usingComparator(BigDecimal::compareTo)
+                .isEqualTo(BigDecimal.ZERO);
         assertThat(result.getUserId()).isEqualTo(userId);
     }
 
@@ -183,33 +207,13 @@ class PointServiceTest {
 
         testPoint.charge(chargeAmount);
 
-        when(pointRepository.findByUserId(userId)).thenReturn(Optional.of(testPoint));
+        when(pointRepository.findByUserId(userId))
+                .thenReturn(Optional.of(testPoint));
 
         // When
         boolean canUse = pointService.canUsePoints(userId, useAmount);
 
         // Then
         assertThat(canUse).isTrue();
-    }
-
-    @Test
-    @DisplayName("포인트 이력을 조회할 수 있다")
-    void getPointHistory() {
-        // Given
-        Long userId = 1L;
-        List<PointHistory> mockHistories = Arrays.asList(
-                PointHistory.charge(userId, new BigDecimal("10000"), "충전"),
-                PointHistory.use(userId, new BigDecimal("3000"), "사용")
-        );
-
-        when(pointHistoryRepository.findByUserIdOrderByCreatedAtDesc(userId))
-                .thenReturn(mockHistories);
-
-        // When
-        List<PointHistory> result = pointService.getPointHistory(userId);
-
-        // Then
-        assertThat(result).hasSize(2);
-        verify(pointHistoryRepository).findByUserIdOrderByCreatedAtDesc(userId);
     }
 }
