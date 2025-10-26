@@ -9,9 +9,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 좌석 예약 서비스 (분산락 + 캐싱 적용)
+ *
+ * 핵심 개선 사항:
+ * 1. 캐시 무효화를 트랜잭션 커밋 후로 이동 (데이터 정합성 보장)
+ * 2. 분산락 범위 최소화 (네트워크 I/O 제외)
  */
 @Slf4j
 @Service("seatReservationService")
@@ -19,15 +25,18 @@ import org.springframework.transaction.annotation.Transactional;
 public class SeatReservationService implements ReserveSeatUseCase {
 
     private final SeatReservationRepository seatReservationRepository;
-    private final SeatReservationQueryService seatQueryService; // 캐시 무효화용
+    private final SeatReservationQueryService seatQueryService;
 
     /**
-     * 좌석 임시 예약 (분산락 + 캐시 무효화)
+     * 좌석 임시 예약 (분산락 적용)
+     *
+     * 분산락 범위: DB 조회 → 상태 검증 → 예약 처리 → DB 저장
+     * 캐시 무효화: 트랜잭션 커밋 후 실행 (분산락 범위 밖)
      */
     @DistributedLock(
             key = "'seat:reservation:' + #concertId + ':' + #seatNumber",
             waitTime = 5L,
-            leaseTime = 3L
+            leaseTime = -1 // Watch Dog 활성화
     )
     @Transactional
     public SeatReservation reserveSeatTemporarily(Long concertId, Integer seatNumber, Long userId) {
@@ -46,23 +55,24 @@ public class SeatReservationService implements ReserveSeatUseCase {
         // 3. 임시 예약 처리
         seat.reserveTemporarily(userId);
 
-        // 4. 저장
+        // 4. DB 저장 (분산락 범위 내)
         SeatReservation reserved = seatReservationRepository.save(seat);
 
-        // ⭐ 5. 캐시 무효화
-        seatQueryService.evictSeatCache(concertId);
+        // 5. 트랜잭션 커밋 후 캐시 무효화 (분산락 범위 밖)
+        // 데이터 정합성 보장: DB 커밋 완료 → 캐시 삭제 순서
+        registerCacheEvictionAfterCommit(concertId);
 
         log.info("좌석 예약 성공 - concertId: {}, seatNumber: {}", concertId, seatNumber);
         return reserved;
     }
 
     /**
-     * 예약 확정 (분산락 + 캐시 무효화)
+     * 예약 확정 (분산락 적용)
      */
     @DistributedLock(
             key = "'seat:confirmation:' + #concertId + ':' + #seatNumber",
             waitTime = 5L,
-            leaseTime = 3L
+            leaseTime = -1 // Watch Dog 활성화
     )
     @Transactional
     public SeatReservation confirmReservation(Long concertId, Integer seatNumber, Long userId) {
@@ -79,11 +89,41 @@ public class SeatReservationService implements ReserveSeatUseCase {
         seat.confirm();
         SeatReservation confirmed = seatReservationRepository.save(seat);
 
-        // 캐시 무효화
-        seatQueryService.evictSeatCache(concertId);
+        // 트랜잭션 커밋 후 캐시 무효화
+        registerCacheEvictionAfterCommit(concertId);
 
         log.info("좌석 확정 성공 - concertId: {}, seatNumber: {}", concertId, seatNumber);
         return confirmed;
+    }
+
+    /**
+     * 트랜잭션 커밋 후 캐시 무효화 등록
+     *
+     * 장점:
+     * 1. DB 커밋 완료 후에만 캐시 삭제 (데이터 정합성 보장)
+     * 2. 캐시 무효화 시간이 분산락 점유 시간에 포함되지 않음
+     * 3. Redis 네트워크 지연이 다른 요청에 영향 없음
+     */
+    private void registerCacheEvictionAfterCommit(Long concertId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                seatQueryService.evictSeatCache(concertId);
+                            } catch (Exception e) {
+                                log.error("캐시 무효화 실패 - concertId: {}, 캐시 불일치 가능성 있음",
+                                        concertId, e);
+                            }
+                        }
+                    }
+            );
+        } else {
+            // 트랜잭션이 활성화되지 않은 경우 즉시 실행
+            log.warn("트랜잭션이 활성화되지 않음 - 즉시 캐시 무효화 실행: concertId={}", concertId);
+            seatQueryService.evictSeatCache(concertId);
+        }
     }
 
     @Override
