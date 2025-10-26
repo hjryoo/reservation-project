@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+
 /**
  * 좌석 조회 서비스 (Redis 캐싱 적용)
  */
@@ -38,7 +39,7 @@ public class SeatReservationQueryService {
             condition = "#concertId != null"
     )
     public List<SeatReservation> getAvailableSeats(Long concertId) {
-        log.info("🔍 [Cache Miss] DB 조회: getAvailableSeats(concertId={})", concertId);
+        log.info("[Cache Miss] DB 조회: getAvailableSeats(concertId={})", concertId);
         return seatReservationRepository.findAvailableSeats(concertId);
     }
 
@@ -46,13 +47,13 @@ public class SeatReservationQueryService {
      * 캐시 무효화 (좌석 예약 시 호출)
      *
      * 호출 시점:
-     * - 좌석 임시 예약 성공 후
-     * - 좌석 예약 확정 후
-     * - 좌석 예약 취소 후
+     * - 좌석 임시 예약 트랜잭션 커밋 후
+     * - 좌석 예약 확정 트랜잭션 커밋 후
+     * - 좌석 예약 취소 트랜잭션 커밋 후
      */
     @CacheEvict(value = "seatAvailability", key = "#concertId")
     public void evictSeatCache(Long concertId) {
-        log.info("🗑️ [Cache Evict] 좌석 캐시 삭제: concertId={}", concertId);
+        log.info("[Cache Evict] 좌석 캐시 삭제: concertId={}", concertId);
     }
 
     /**
@@ -60,6 +61,6 @@ public class SeatReservationQueryService {
      */
     @CacheEvict(value = "seatAvailability", allEntries = true)
     public void evictAllSeatCaches() {
-        log.info("🗑️ [Cache Evict] 모든 좌석 캐시 삭제");
+        log.info("[Cache Evict] 모든 좌석 캐시 삭제");
     }
 }
