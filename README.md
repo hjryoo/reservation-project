@@ -53,4 +53,5 @@
 - [인프라 구성도](docs/concert_reserv_infra.png)
 - [시퀀스 다이어그램](docs/sequence_diagram.png)
 - [동시성 제어 테스트](docs/concurrency.md)
+- [캐싱 보고서](docs/CacheReport.md)
 ---
