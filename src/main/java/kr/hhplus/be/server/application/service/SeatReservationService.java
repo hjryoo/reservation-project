@@ -1,8 +1,10 @@
 package kr.hhplus.be.server.application.service;
 
+import kr.hhplus.be.server.domain.model.Concert;
 import kr.hhplus.be.server.domain.model.Reservation;
 import kr.hhplus.be.server.domain.model.SeatReservation;
 import kr.hhplus.be.server.domain.port.in.ReserveSeatUseCase;
+import kr.hhplus.be.server.domain.repository.ConcertRepository;
 import kr.hhplus.be.server.domain.repository.SeatReservationRepository;
 import kr.hhplus.be.server.infrastructure.lock.DistributedLock;
 import lombok.RequiredArgsConstructor;
@@ -13,11 +15,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * 좌석 예약 서비스 (분산락 + 캐싱 적용)
- *
- * 핵심 개선 사항:
- * 1. 캐시 무효화를 트랜잭션 커밋 후로 이동 (데이터 정합성 보장)
- * 2. 분산락 범위 최소화 (네트워크 I/O 제외)
+ * 좌석 예약 서비스 (분산락 + 캐싱 + 매진 랭킹 적용)
  */
 @Slf4j
 @Service("seatReservationService")
@@ -26,12 +24,11 @@ public class SeatReservationService implements ReserveSeatUseCase {
 
     private final SeatReservationRepository seatReservationRepository;
     private final SeatReservationQueryService seatQueryService;
+    private final ConcertRepository concertRepository;
+    private final ConcertRankingService rankingService; // 신규
 
     /**
      * 좌석 임시 예약 (분산락 적용)
-     *
-     * 분산락 범위: DB 조회 → 상태 검증 → 예약 처리 → DB 저장
-     * 캐시 무효화: 트랜잭션 커밋 후 실행 (분산락 범위 밖)
      */
     @DistributedLock(
             key = "'seat:reservation:' + #concertId + ':' + #seatNumber",
@@ -55,11 +52,10 @@ public class SeatReservationService implements ReserveSeatUseCase {
         // 3. 임시 예약 처리
         seat.reserveTemporarily(userId);
 
-        // 4. DB 저장 (분산락 범위 내)
+        // 4. DB 저장
         SeatReservation reserved = seatReservationRepository.save(seat);
 
-        // 5. 트랜잭션 커밋 후 캐시 무효화 (분산락 범위 밖)
-        // 데이터 정합성 보장: DB 커밋 완료 → 캐시 삭제 순서
+        // 5. 트랜잭션 커밋 후 캐시 무효화
         registerCacheEvictionAfterCommit(concertId);
 
         log.info("좌석 예약 성공 - concertId: {}, seatNumber: {}", concertId, seatNumber);
@@ -67,7 +63,7 @@ public class SeatReservationService implements ReserveSeatUseCase {
     }
 
     /**
-     * 예약 확정 (분산락 적용)
+     * 예약 확정 (분산락 + 매진 체크)
      */
     @DistributedLock(
             key = "'seat:confirmation:' + #concertId + ':' + #seatNumber",
@@ -78,6 +74,7 @@ public class SeatReservationService implements ReserveSeatUseCase {
     public SeatReservation confirmReservation(Long concertId, Integer seatNumber, Long userId) {
         log.info("좌석 확정 시도 - concertId: {}, seatNumber: {}, userId: {}", concertId, seatNumber, userId);
 
+        // 1. 좌석 확정
         SeatReservation seat = seatReservationRepository
                 .findByConcertIdAndSeatNumber(concertId, seatNumber)
                 .orElseThrow(() -> new IllegalArgumentException("좌석을 찾을 수 없습니다."));
@@ -89,7 +86,19 @@ public class SeatReservationService implements ReserveSeatUseCase {
         seat.confirm();
         SeatReservation confirmed = seatReservationRepository.save(seat);
 
-        // 트랜잭션 커밋 후 캐시 무효화
+        // 2. 콘서트 가용 좌석 감소
+        Concert concert = concertRepository.findById(concertId)
+                .orElseThrow(() -> new IllegalArgumentException("콘서트를 찾을 수 없습니다."));
+
+        concert.decreaseAvailableSeats();
+        Concert updatedConcert = concertRepository.save(concert);
+
+        // 3. 매진 체크 및 랭킹 등록
+        if (updatedConcert.isSoldOut()) {
+            registerSoldOutRankingAfterCommit(updatedConcert);
+        }
+
+        // 4. 캐시 무효화
         registerCacheEvictionAfterCommit(concertId);
 
         log.info("좌석 확정 성공 - concertId: {}, seatNumber: {}", concertId, seatNumber);
@@ -98,11 +107,6 @@ public class SeatReservationService implements ReserveSeatUseCase {
 
     /**
      * 트랜잭션 커밋 후 캐시 무효화 등록
-     *
-     * 장점:
-     * 1. DB 커밋 완료 후에만 캐시 삭제 (데이터 정합성 보장)
-     * 2. 캐시 무효화 시간이 분산락 점유 시간에 포함되지 않음
-     * 3. Redis 네트워크 지연이 다른 요청에 영향 없음
      */
     private void registerCacheEvictionAfterCommit(Long concertId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -113,16 +117,33 @@ public class SeatReservationService implements ReserveSeatUseCase {
                             try {
                                 seatQueryService.evictSeatCache(concertId);
                             } catch (Exception e) {
-                                log.error("캐시 무효화 실패 - concertId: {}, 캐시 불일치 가능성 있음",
-                                        concertId, e);
+                                log.error("캐시 무효화 실패 - concertId: {}", concertId, e);
                             }
                         }
                     }
             );
-        } else {
-            // 트랜잭션이 활성화되지 않은 경우 즉시 실행
-            log.warn("트랜잭션이 활성화되지 않음 - 즉시 캐시 무효화 실행: concertId={}", concertId);
-            seatQueryService.evictSeatCache(concertId);
+        }
+    }
+
+    /**
+     * 트랜잭션 커밋 후 매진 랭킹 등록
+     */
+    private void registerSoldOutRankingAfterCommit(Concert concert) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                rankingService.registerSoldOutConcert(concert);
+                                log.info("매진 랭킹 등록 완료 - concertId: {}, title: {}",
+                                        concert.getId(), concert.getTitle());
+                            } catch (Exception e) {
+                                log.error("매진 랭킹 등록 실패 - concertId: {}", concert.getId(), e);
+                            }
+                        }
+                    }
+            );
         }
     }
 
