@@ -1,7 +1,6 @@
 package kr.hhplus.be.server.infrastructure.persistence;
 
 import kr.hhplus.be.server.domain.model.Concert;
-import kr.hhplus.be.server.domain.model.ConcertDate;
 import kr.hhplus.be.server.domain.model.ConcertStatus;
 import kr.hhplus.be.server.domain.repository.ConcertRepository;
 import kr.hhplus.be.server.infrastructure.persistence.entity.ConcertEntity;
@@ -55,8 +54,6 @@ public class ConcertRepositoryImpl implements ConcertRepository {
 
     @Override
     public List<Concert> findConcertsByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
-        // ConcertDate를 통해 조회하는 것이 더 정확하므로,
-        // 여기서는 생성일 기준으로 대체 (실제로는 ConcertDateRepository 사용 권장)
         return jpaRepository.findAll()
                 .stream()
                 .filter(entity -> entity.getCreatedAt().isAfter(startDate.minusHours(1)) &&
@@ -97,6 +94,14 @@ public class ConcertRepositoryImpl implements ConcertRepository {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public List<Concert> findSoldOutConcerts() {
+        return jpaRepository.findByStatus(ConcertStatus.SOLD_OUT)
+                .stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
     @Transactional
     @Override
     public void delete(Concert concert) {
@@ -121,7 +126,6 @@ public class ConcertRepositoryImpl implements ConcertRepository {
         return jpaRepository.count();
     }
 
-    // Entity ↔ Domain 변환 메서드
     private ConcertEntity toEntity(Concert domain) {
         ConcertEntity entity = new ConcertEntity(
                 domain.getTitle(),
@@ -133,10 +137,13 @@ public class ConcertRepositoryImpl implements ConcertRepository {
                 domain.getStatus()
         );
 
-        // ID가 있는 경우 (업데이트)
         if (domain.getId() != null) {
             entity.setId(domain.getId());
         }
+
+        // 매진 추적 필드 설정
+        entity.setBookingOpenAt(domain.getBookingOpenAt());
+        entity.setSoldOutAt(domain.getSoldOutAt());
 
         return entity;
     }
@@ -150,19 +157,22 @@ public class ConcertRepositoryImpl implements ConcertRepository {
                 entity.getPrice()
         );
 
-        // 기술적 필드 할당
         domain.assignTechnicalFields(
                 entity.getId(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
 
-        // 상태 및 가변 필드 복원
+        // 매진 추적 필드 복원
+        domain.assignSoldOutFields(
+                entity.getBookingOpenAt(),
+                entity.getSoldOutAt()
+        );
+
         if (entity.getStatus() != domain.getStatus()) {
             domain.updateStatus(entity.getStatus());
         }
 
-        // availableSeats가 다른 경우 조정
         int seatDifference = entity.getAvailableSeats() - domain.getAvailableSeats();
         if (seatDifference < 0) {
             for (int i = 0; i < Math.abs(seatDifference); i++) {
