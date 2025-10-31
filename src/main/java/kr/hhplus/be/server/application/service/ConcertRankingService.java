@@ -2,8 +2,8 @@ package kr.hhplus.be.server.application.service;
 
 import kr.hhplus.be.server.domain.model.Concert;
 import kr.hhplus.be.server.domain.repository.ConcertRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
@@ -19,34 +19,42 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ConcertRankingService {
 
     private final RedisTemplate<String, String> redisTemplate;
     private final ConcertRepository concertRepository;
+
+    // @Qualifier로 명시적 Bean 지정
+    public ConcertRankingService(
+            @Qualifier("rankingRedisTemplate") RedisTemplate<String, String> redisTemplate,
+            ConcertRepository concertRepository) {
+        this.redisTemplate = redisTemplate;
+        this.concertRepository = concertRepository;
+    }
 
     private static final String RANKING_KEY_PREFIX = "concert:soldout:ranking";
     private static final DateTimeFormatter DAILY_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter MONTHLY_FORMAT = DateTimeFormatter.ofPattern("yyyyMM");
 
     /**
-     * 매진 콘서트 랭킹 등록
+     * 매진 콘서트 랭킹 등록 (밀리초 단위 Score)
      */
     public void registerSoldOutConcert(Concert concert) {
         if (!concert.isSoldOut()) {
             throw new IllegalArgumentException("매진되지 않은 콘서트는 랭킹에 등록할 수 없습니다.");
         }
 
-        Long durationSeconds = concert.calculateSoldOutDurationSeconds();
+        // 밀리초 단위로 저장 (정확한 순위 계산)
+        Long durationMillis = concert.calculateSoldOutDurationMillis();
         String concertId = concert.getId().toString();
 
-        log.info("매진 콘서트 랭킹 등록 - concertId: {}, title: {}, 매진 소요 시간: {}초",
-                concertId, concert.getTitle(), durationSeconds);
+        log.info("매진 콘서트 랭킹 등록 - concertId: {}, title: {}, 매진 소요 시간: {}ms ({}초)",
+                concertId, concert.getTitle(), durationMillis, durationMillis / 1000.0);
 
-        registerDailyRanking(concertId, durationSeconds);
-        registerWeeklyRanking(concertId, durationSeconds);
-        registerMonthlyRanking(concertId, durationSeconds);
-        registerAllTimeRanking(concertId, durationSeconds);
+        registerDailyRanking(concertId, durationMillis);
+        registerWeeklyRanking(concertId, durationMillis);
+        registerMonthlyRanking(concertId, durationMillis);
+        registerAllTimeRanking(concertId, durationMillis);
     }
 
     private void registerDailyRanking(String concertId, Long durationSeconds) {
@@ -76,9 +84,6 @@ public class ConcertRankingService {
         log.debug("전체 랭킹 등록 - key: {}, concertId: {}, score: {}", key, concertId, durationSeconds);
     }
 
-    /**
-     * Top N 빠른 매진 콘서트 조회 (상세 정보 포함)
-     */
     public List<ConcertRankingDto> getTopDailySoldOutConcerts(int limit) {
         String key = getDailyRankingKey(LocalDate.now());
         return getTopRankingWithDetails(key, limit);
@@ -99,9 +104,6 @@ public class ConcertRankingService {
         return getTopRankingWithDetails(key, limit);
     }
 
-    /**
-     * 특정 콘서트의 순위 조회
-     */
     public Long getConcertRank(Long concertId, RankingPeriod period) {
         String key = getRankingKey(period, LocalDate.now());
         Long rank = redisTemplate.opsForZSet().rank(key, concertId.toString());
@@ -121,7 +123,8 @@ public class ConcertRankingService {
 
         for (ZSetOperations.TypedTuple<String> entry : topEntries) {
             Long concertId = Long.parseLong(entry.getValue());
-            Long durationSeconds = entry.getScore().longValue();
+            Long durationMillis = entry.getScore().longValue(); // 밀리초
+            Long durationSeconds = durationMillis / 1000; // 초로 변환
 
             Optional<Concert> concertOpt = concertRepository.findById(concertId);
             if (concertOpt.isPresent()) {
@@ -132,7 +135,7 @@ public class ConcertRankingService {
                         concert.getTitle(),
                         concert.getArtist(),
                         concert.getVenue(),
-                        durationSeconds,
+                        durationSeconds, // 초 단위
                         formatDuration(durationSeconds)
                 ));
             }

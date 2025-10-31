@@ -68,7 +68,7 @@ public class SeatReservationService implements ReserveSeatUseCase {
     @DistributedLock(
             key = "'seat:confirmation:' + #concertId + ':' + #seatNumber",
             waitTime = 5L,
-            leaseTime = -1 // Watch Dog 활성화
+            leaseTime = -1
     )
     @Transactional
     public SeatReservation confirmReservation(Long concertId, Integer seatNumber, Long userId) {
@@ -86,7 +86,7 @@ public class SeatReservationService implements ReserveSeatUseCase {
         seat.confirm();
         SeatReservation confirmed = seatReservationRepository.save(seat);
 
-        // 2. 콘서트 가용 좌석 감소
+        // 2. DB에서 최신 Concert 조회 (Optimistic Lock 충돌 방지)
         Concert concert = concertRepository.findById(concertId)
                 .orElseThrow(() -> new IllegalArgumentException("콘서트를 찾을 수 없습니다."));
 
@@ -105,9 +105,6 @@ public class SeatReservationService implements ReserveSeatUseCase {
         return confirmed;
     }
 
-    /**
-     * 트랜잭션 커밋 후 캐시 무효화 등록
-     */
     private void registerCacheEvictionAfterCommit(Long concertId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(
@@ -127,19 +124,28 @@ public class SeatReservationService implements ReserveSeatUseCase {
 
     /**
      * 트랜잭션 커밋 후 매진 랭킹 등록
+     *
+     * 주의: Concert 객체를 직렬화하여 전달 (Detached 상태 방지)
      */
     private void registerSoldOutRankingAfterCommit(Concert concert) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            // Concert의 필요한 정보만 추출 (Detached 문제 방지)
+            final Long concertId = concert.getId();
+            final String title = concert.getTitle();
+
             TransactionSynchronizationManager.registerSynchronization(
                     new TransactionSynchronization() {
                         @Override
                         public void afterCommit() {
                             try {
-                                rankingService.registerSoldOutConcert(concert);
-                                log.info("매진 랭킹 등록 완료 - concertId: {}, title: {}",
-                                        concert.getId(), concert.getTitle());
+                                // 트랜잭션 커밋 후 다시 조회하여 등록
+                                Concert freshConcert = concertRepository.findById(concertId)
+                                        .orElseThrow(() -> new IllegalStateException("콘서트를 찾을 수 없습니다."));
+
+                                rankingService.registerSoldOutConcert(freshConcert);
+                                log.info("매진 랭킹 등록 완료 - concertId: {}, title: {}", concertId, title);
                             } catch (Exception e) {
-                                log.error("매진 랭킹 등록 실패 - concertId: {}", concert.getId(), e);
+                                log.error("매진 랭킹 등록 실패 - concertId: {}", concertId, e);
                             }
                         }
                     }

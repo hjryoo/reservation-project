@@ -25,9 +25,27 @@ public class ConcertRepositoryImpl implements ConcertRepository {
     @Override
     @Transactional
     public Concert save(Concert concert) {
+        // ID가 있는 경우 (업데이트) - DB에서 기존 엔티티 조회
+        if (concert.getId() != null) {
+            ConcertEntity existingEntity = jpaRepository.findById(concert.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("콘서트를 찾을 수 없습니다: " + concert.getId()));
+
+            // 기존 엔티티에 도메인 값 업데이트
+            updateEntity(existingEntity, concert);
+            ConcertEntity savedEntity = jpaRepository.save(existingEntity);
+            return toDomain(savedEntity);
+        }
+
+        // ID가 없는 경우 (신규 생성)
         ConcertEntity entity = toEntity(concert);
         ConcertEntity savedEntity = jpaRepository.save(entity);
         return toDomain(savedEntity);
+    }
+
+    private void updateEntity(ConcertEntity entity, Concert concert) {
+        entity.setAvailableSeats(concert.getAvailableSeats());
+        entity.setStatus(concert.getStatus());
+        entity.setSoldOutAt(concert.getSoldOutAt());
     }
 
     @Override

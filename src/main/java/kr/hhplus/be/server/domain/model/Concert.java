@@ -104,6 +104,13 @@ public class Concert {
         return ChronoUnit.SECONDS.between(this.bookingOpenAt, this.soldOutAt);
     }
 
+    public Long calculateSoldOutDurationMillis() {
+        if (this.soldOutAt == null || this.bookingOpenAt == null) {
+            throw new IllegalStateException("매진 시간 또는 예약 시작 시간이 기록되지 않았습니다.");
+        }
+        return ChronoUnit.MILLIS.between(this.bookingOpenAt, this.soldOutAt);
+    }
+
     // 신규: 매진 여부 확인
     public boolean isSoldOut() {
         return this.status == ConcertStatus.SOLD_OUT;
