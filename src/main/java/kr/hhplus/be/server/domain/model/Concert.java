@@ -1,6 +1,7 @@
 package kr.hhplus.be.server.domain.model;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 
 public class Concert {
     // 기술적 필드 (mutable)
@@ -13,9 +14,13 @@ public class Concert {
     private final String artist;
     private final String venue;
     private final Integer totalSeats;
-    private Integer availableSeats;  // mutable - 예약에 따라 변경
+    private Integer availableSeats;
     private final Long price;
-    private ConcertStatus status;    // mutable - 상태 변경 가능
+    private ConcertStatus status;
+
+    // 매진 추적 필드 (신규)
+    private LocalDateTime bookingOpenAt;  // 예약 시작 시간
+    private LocalDateTime soldOutAt;      // 매진 완료 시간
 
     private Concert(String title, String artist, String venue,
                     Integer totalSeats, Long price) {
@@ -36,7 +41,7 @@ public class Concert {
         return new Concert(title, artist, venue, totalSeats, price);
     }
 
-    // 비즈니스 규칙
+    // 기존 비즈니스 규칙
     public boolean isBookingAvailable() {
         return status == ConcertStatus.AVAILABLE && availableSeats > 0;
     }
@@ -55,6 +60,11 @@ public class Concert {
         }
         this.availableSeats--;
         this.updatedAt = LocalDateTime.now();
+
+        // 매진 체크
+        if (this.availableSeats == 0 && this.status != ConcertStatus.SOLD_OUT) {
+            markAsSoldOut();
+        }
     }
 
     public void increaseAvailableSeats() {
@@ -63,6 +73,47 @@ public class Concert {
         }
         this.availableSeats++;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    // 신규: 예약 시작 시간 설정
+    public void openBooking() {
+        if (this.bookingOpenAt != null) {
+            throw new IllegalStateException("이미 예약이 시작된 콘서트입니다.");
+        }
+        this.bookingOpenAt = LocalDateTime.now();
+        this.status = ConcertStatus.AVAILABLE;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    // 신규: 매진 처리
+    public void markAsSoldOut() {
+        if (this.status == ConcertStatus.SOLD_OUT) {
+            throw new IllegalStateException("이미 매진된 콘서트입니다.");
+        }
+
+        this.status = ConcertStatus.SOLD_OUT;
+        this.soldOutAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    // 신규: 매진 소요 시간 계산 (초 단위)
+    public Long calculateSoldOutDurationSeconds() {
+        if (this.soldOutAt == null || this.bookingOpenAt == null) {
+            throw new IllegalStateException("매진 시간 또는 예약 시작 시간이 기록되지 않았습니다.");
+        }
+        return ChronoUnit.SECONDS.between(this.bookingOpenAt, this.soldOutAt);
+    }
+
+    public Long calculateSoldOutDurationMillis() {
+        if (this.soldOutAt == null || this.bookingOpenAt == null) {
+            throw new IllegalStateException("매진 시간 또는 예약 시작 시간이 기록되지 않았습니다.");
+        }
+        return ChronoUnit.MILLIS.between(this.bookingOpenAt, this.soldOutAt);
+    }
+
+    // 신규: 매진 여부 확인
+    public boolean isSoldOut() {
+        return this.status == ConcertStatus.SOLD_OUT;
     }
 
     private static void validateInput(String title, String artist, String venue,
@@ -95,6 +146,12 @@ public class Concert {
         this.id = id;
     }
 
+    // 신규: 매진 관련 기술 필드 할당
+    public void assignSoldOutFields(LocalDateTime bookingOpenAt, LocalDateTime soldOutAt) {
+        this.bookingOpenAt = bookingOpenAt;
+        this.soldOutAt = soldOutAt;
+    }
+
     // Getters
     public Long getId() { return id; }
     public String getTitle() { return title; }
@@ -106,4 +163,6 @@ public class Concert {
     public ConcertStatus getStatus() { return status; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public LocalDateTime getBookingOpenAt() { return bookingOpenAt; }
+    public LocalDateTime getSoldOutAt() { return soldOutAt; }
 }

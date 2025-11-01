@@ -29,6 +29,9 @@ public interface ConcertRepository {
 
     List<Concert> findByStatus(ConcertStatus status);
 
+    // 신규: 매진된 콘서트 조회
+    List<Concert> findSoldOutConcerts();
+
     @Transactional
     void delete(Concert concert);
 
