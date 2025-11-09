@@ -9,6 +9,15 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+import jakarta.persistence.*;
+import kr.hhplus.be.server.domain.model.ConcertStatus;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
 @Entity
 @Table(
         name = "concerts",
@@ -16,7 +25,8 @@ import java.util.List;
                 @Index(name = "idx_concert_artist", columnList = "artist"),
                 @Index(name = "idx_concert_status", columnList = "status"),
                 @Index(name = "idx_concert_created", columnList = "created_at"),
-                @Index(name = "idx_concert_artist_status", columnList = "artist, status")
+                @Index(name = "idx_concert_artist_status", columnList = "artist, status"),
+                @Index(name = "idx_concert_soldout", columnList = "sold_out_at")
         }
 )
 public class ConcertEntity {
@@ -55,15 +65,20 @@ public class ConcertEntity {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    // 신규: 매진 추적 필드
+    @Column(name = "booking_open_at")
+    private LocalDateTime bookingOpenAt;
+
+    @Column(name = "sold_out_at")
+    private LocalDateTime soldOutAt;
+
     @Version
     @Column(name = "version", nullable = false)
     private Long version = 0L;
 
-    // 연관관계 매핑 (양방향)
     @OneToMany(mappedBy = "concert", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<ConcertDateEntity> concertDates = new ArrayList<>();
 
-    // JPA용 기본 생성자
     protected ConcertEntity() {}
 
     public ConcertEntity(String title, String artist, String venue,
@@ -78,7 +93,6 @@ public class ConcertEntity {
         this.status = status;
     }
 
-    // 연관관계 편의 메서드
     public void addConcertDate(ConcertDateEntity concertDate) {
         concertDates.add(concertDate);
         concertDate.setConcert(this);
@@ -116,6 +130,12 @@ public class ConcertEntity {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
+
+    public LocalDateTime getBookingOpenAt() { return bookingOpenAt; }
+    public void setBookingOpenAt(LocalDateTime bookingOpenAt) { this.bookingOpenAt = bookingOpenAt; }
+
+    public LocalDateTime getSoldOutAt() { return soldOutAt; }
+    public void setSoldOutAt(LocalDateTime soldOutAt) { this.soldOutAt = soldOutAt; }
 
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }

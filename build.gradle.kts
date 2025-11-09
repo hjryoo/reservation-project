@@ -64,6 +64,7 @@ dependencies {
 	// 테스트용 Embedded Redis
 	testImplementation("it.ozimov:embedded-redis:0.7.3") {
 		exclude(group = "org.slf4j", module = "slf4j-simple")
+        testImplementation("org.awaitility:awaitility:4.2.0")
 	}
 }
 
