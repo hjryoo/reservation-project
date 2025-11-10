@@ -73,35 +73,35 @@ public class SeatReservationService implements ReserveSeatUseCase {
     @Transactional
     public SeatReservation confirmReservation(Long concertId, Integer seatNumber, Long userId) {
         log.info("좌석 확정 시도 - concertId: {}, seatNumber: {}, userId: {}", concertId, seatNumber, userId);
+        log.info("좌석 확정 시작 - concertId: {}, seatNumber: {}, userId: {}",
+                concertId, seatNumber, userId);
 
-        // 1. 좌석 확정
+        // 1. 좌석 예약 확정
         SeatReservation seat = seatReservationRepository
                 .findByConcertIdAndSeatNumber(concertId, seatNumber)
                 .orElseThrow(() -> new IllegalArgumentException("좌석을 찾을 수 없습니다."));
 
         if (!seat.canBeConfirmed(userId)) {
-            throw new IllegalStateException("결제할 수 없는 예약입니다.");
+            throw new IllegalStateException("확정할 수 없는 예약입니다.");
         }
 
         seat.confirm();
         SeatReservation confirmed = seatReservationRepository.save(seat);
 
-        // 2. DB에서 최신 Concert 조회 (Optimistic Lock 충돌 방지)
-        Concert concert = concertRepository.findById(concertId)
-                .orElseThrow(() -> new IllegalArgumentException("콘서트를 찾을 수 없습니다."));
+        // 2. 원자적 좌석 감소
+        int updatedRows = concertRepository.decreaseAvailableSeatsAtomically(concertId);
 
-        concert.decreaseAvailableSeats();
-        Concert updatedConcert = concertRepository.save(concert);
+        if (updatedRows == 0) {
+            throw new IllegalStateException("좌석 감소 실패 - 이미 매진되었거나 존재하지 않는 콘서트");
+        }
 
         // 3. 매진 체크 및 랭킹 등록
-        if (updatedConcert.isSoldOut()) {
-            registerSoldOutRankingAfterCommit(updatedConcert);
-        }
+        registerSoldOutRankingAfterCommit(concertId);
 
         // 4. 캐시 무효화
         registerCacheEvictionAfterCommit(concertId);
 
-        log.info("좌석 확정 성공 - concertId: {}, seatNumber: {}", concertId, seatNumber);
+        log.info("좌석 확정 완료 - concertId: {}, seatNumber: {}", concertId, seatNumber);
         return confirmed;
     }
 
@@ -127,23 +127,23 @@ public class SeatReservationService implements ReserveSeatUseCase {
      *
      * 주의: Concert 객체를 직렬화하여 전달 (Detached 상태 방지)
      */
-    private void registerSoldOutRankingAfterCommit(Concert concert) {
+    private void registerSoldOutRankingAfterCommit(Long concertId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            // Concert의 필요한 정보만 추출 (Detached 문제 방지)
-            final Long concertId = concert.getId();
-            final String title = concert.getTitle();
-
             TransactionSynchronizationManager.registerSynchronization(
                     new TransactionSynchronization() {
                         @Override
                         public void afterCommit() {
                             try {
-                                // 트랜잭션 커밋 후 다시 조회하여 등록
+                                // 트랜잭션 커밋 후 최신 Concert 조회
                                 Concert freshConcert = concertRepository.findById(concertId)
-                                        .orElseThrow(() -> new IllegalStateException("콘서트를 찾을 수 없습니다."));
+                                        .orElseThrow(() -> new IllegalArgumentException(
+                                                "콘서트를 찾을 수 없습니다."));
 
-                                rankingService.registerSoldOutConcert(freshConcert);
-                                log.info("매진 랭킹 등록 완료 - concertId: {}, title: {}", concertId, title);
+                                if (freshConcert.isSoldOut()) {
+                                    rankingService.registerSoldOutConcert(freshConcert);
+                                    log.info("매진 랭킹 등록 완료 - concertId: {}, title: {}",
+                                            freshConcert.getId(), freshConcert.getTitle());
+                                }
                             } catch (Exception e) {
                                 log.error("매진 랭킹 등록 실패 - concertId: {}", concertId, e);
                             }

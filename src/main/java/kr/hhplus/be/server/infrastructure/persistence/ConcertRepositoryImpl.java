@@ -25,111 +25,176 @@ public class ConcertRepositoryImpl implements ConcertRepository {
     @Override
     @Transactional
     public Concert save(Concert concert) {
-        // ID가 있는 경우 (업데이트) - DB에서 기존 엔티티 조회
         if (concert.getId() != null) {
             ConcertEntity existingEntity = jpaRepository.findById(concert.getId())
-                    .orElseThrow(() -> new IllegalArgumentException("콘서트를 찾을 수 없습니다: " + concert.getId()));
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "수정하려는 콘서트를 찾을 수 없습니다. ID: " + concert.getId()));
 
-            // 기존 엔티티에 도메인 값 업데이트
             updateEntity(existingEntity, concert);
             ConcertEntity savedEntity = jpaRepository.save(existingEntity);
             return toDomain(savedEntity);
         }
 
-        // ID가 없는 경우 (신규 생성)
         ConcertEntity entity = toEntity(concert);
         ConcertEntity savedEntity = jpaRepository.save(entity);
         return toDomain(savedEntity);
     }
 
+    @Override
+    @Transactional
+    public int decreaseAvailableSeatsAtomically(Long concertId) {
+        return jpaRepository.decreaseAvailableSeatsAtomically(concertId);
+    }
+
+    /**
+     * Entity 업데이트 (bookingOpenAt 필드 포함)
+     */
     private void updateEntity(ConcertEntity entity, Concert concert) {
+        entity.setTitle(concert.getTitle());
+        entity.setArtist(concert.getArtist());
+        entity.setVenue(concert.getVenue());
+        entity.setTotalSeats(concert.getTotalSeats());
         entity.setAvailableSeats(concert.getAvailableSeats());
+        entity.setPrice(concert.getPrice());
         entity.setStatus(concert.getStatus());
+        entity.setBookingOpenAt(concert.getBookingOpenAt());
         entity.setSoldOutAt(concert.getSoldOutAt());
+    }
+
+    /**
+     * Domain to Entity
+     */
+    private ConcertEntity toEntity(Concert concert) {
+        ConcertEntity entity = new ConcertEntity(
+                concert.getTitle(),
+                concert.getArtist(),
+                concert.getVenue(),
+                concert.getTotalSeats(),
+                concert.getAvailableSeats(),
+                concert.getPrice(),
+                concert.getStatus()
+        );
+
+        if (concert.getId() != null) {
+            entity.setId(concert.getId());
+        }
+
+        entity.setBookingOpenAt(concert.getBookingOpenAt());
+        entity.setSoldOutAt(concert.getSoldOutAt());
+
+        return entity;
+    }
+
+    /**
+     * Entity to Domain
+     */
+    private Concert toDomain(ConcertEntity entity) {
+        Concert concert = Concert.create(
+                entity.getTitle(),
+                entity.getArtist(),
+                entity.getVenue(),
+                entity.getTotalSeats(),
+                entity.getPrice()
+        );
+
+        concert.assignTechnicalFields(
+                entity.getId(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+
+        concert.assignSoldOutFields(
+                entity.getBookingOpenAt(),
+                entity.getSoldOutAt()
+        );
+
+        if (entity.getStatus() != concert.getStatus()) {
+            concert.updateStatus(entity.getStatus());
+        }
+
+        if (entity.getAvailableSeats() != null &&
+                !entity.getAvailableSeats().equals(entity.getTotalSeats())) {
+            int difference = entity.getTotalSeats() - entity.getAvailableSeats();
+            for (int i = 0; i < difference; i++) {
+                concert.decreaseAvailableSeats();
+            }
+        }
+
+        return concert;
     }
 
     @Override
     public Optional<Concert> findById(Long id) {
-        return jpaRepository.findById(id)
-                .map(this::toDomain);
+        return jpaRepository.findById(id).map(this::toDomain);
     }
 
     @Override
     public List<Concert> findAll() {
-        return jpaRepository.findAll()
-                .stream()
+        return jpaRepository.findAll().stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Concert> findAvailableConcerts(ConcertStatus status, LocalDateTime currentDate) {
-        return jpaRepository.findByStatusAndCreatedAtAfter(status, currentDate)
-                .stream()
+        return jpaRepository.findByStatus(status).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Concert> findConcertsByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
-        return jpaRepository.findAll()
-                .stream()
-                .filter(entity -> entity.getCreatedAt().isAfter(startDate.minusHours(1)) &&
-                        entity.getCreatedAt().isBefore(endDate.plusHours(1)))
+        return jpaRepository.findAll().stream()
                 .map(this::toDomain)
+                .filter(c -> c.getCreatedAt().isAfter(startDate) && c.getCreatedAt().isBefore(endDate))
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Concert> findByArtistAndFutureDates(String artist, LocalDateTime currentDate) {
-        return jpaRepository.findByArtistAndCreatedAtAfter(artist, currentDate)
-                .stream()
+        return jpaRepository.findByArtist(artist).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Concert> findByArtist(String artist) {
-        return jpaRepository.findByArtist(artist)
-                .stream()
+        return jpaRepository.findByArtist(artist).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Concert> findByVenue(String venue) {
-        return jpaRepository.findByVenue(venue)
-                .stream()
+        return jpaRepository.findByVenue(venue).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Concert> findByStatus(ConcertStatus status) {
-        return jpaRepository.findByStatus(status)
-                .stream()
+        return jpaRepository.findByStatus(status).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Concert> findSoldOutConcerts() {
-        return jpaRepository.findByStatus(ConcertStatus.SOLD_OUT)
-                .stream()
+        return jpaRepository.findByStatus(ConcertStatus.SOLD_OUT).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }
 
-    @Transactional
     @Override
+    @Transactional
     public void delete(Concert concert) {
         if (concert.getId() != null) {
             jpaRepository.deleteById(concert.getId());
         }
     }
 
-    @Transactional
     @Override
+    @Transactional
     public void deleteById(Long id) {
         jpaRepository.deleteById(id);
     }
@@ -142,66 +207,5 @@ public class ConcertRepositoryImpl implements ConcertRepository {
     @Override
     public long count() {
         return jpaRepository.count();
-    }
-
-    private ConcertEntity toEntity(Concert domain) {
-        ConcertEntity entity = new ConcertEntity(
-                domain.getTitle(),
-                domain.getArtist(),
-                domain.getVenue(),
-                domain.getTotalSeats(),
-                domain.getAvailableSeats(),
-                domain.getPrice(),
-                domain.getStatus()
-        );
-
-        if (domain.getId() != null) {
-            entity.setId(domain.getId());
-        }
-
-        // 매진 추적 필드 설정
-        entity.setBookingOpenAt(domain.getBookingOpenAt());
-        entity.setSoldOutAt(domain.getSoldOutAt());
-
-        return entity;
-    }
-
-    private Concert toDomain(ConcertEntity entity) {
-        Concert domain = Concert.create(
-                entity.getTitle(),
-                entity.getArtist(),
-                entity.getVenue(),
-                entity.getTotalSeats(),
-                entity.getPrice()
-        );
-
-        domain.assignTechnicalFields(
-                entity.getId(),
-                entity.getCreatedAt(),
-                entity.getUpdatedAt()
-        );
-
-        // 매진 추적 필드 복원
-        domain.assignSoldOutFields(
-                entity.getBookingOpenAt(),
-                entity.getSoldOutAt()
-        );
-
-        if (entity.getStatus() != domain.getStatus()) {
-            domain.updateStatus(entity.getStatus());
-        }
-
-        int seatDifference = entity.getAvailableSeats() - domain.getAvailableSeats();
-        if (seatDifference < 0) {
-            for (int i = 0; i < Math.abs(seatDifference); i++) {
-                domain.decreaseAvailableSeats();
-            }
-        } else if (seatDifference > 0) {
-            for (int i = 0; i < seatDifference; i++) {
-                domain.increaseAvailableSeats();
-            }
-        }
-
-        return domain;
     }
 }
