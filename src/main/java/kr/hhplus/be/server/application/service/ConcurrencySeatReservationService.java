@@ -2,10 +2,15 @@ package kr.hhplus.be.server.application.service;
 
 import kr.hhplus.be.server.domain.model.SeatReservation;
 import kr.hhplus.be.server.domain.model.SeatStatus;
+import kr.hhplus.be.server.domain.repository.ConcertRepository;
 import kr.hhplus.be.server.domain.repository.SeatReservationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -14,9 +19,12 @@ import java.util.Optional;
 public class ConcurrencySeatReservationService {
 
     private final SeatReservationRepository seatReservationRepository;
+    private final ConcertRepository concertRepository;
+    private static final Logger log = LoggerFactory.getLogger(SeatExpirationService.class);
 
-    public ConcurrencySeatReservationService(SeatReservationRepository seatReservationRepository) {
+    public ConcurrencySeatReservationService(SeatReservationRepository seatReservationRepository, ConcertRepository concertRepository) {
         this.seatReservationRepository = seatReservationRepository;
+        this.concertRepository = concertRepository;
     }
 
     /**
@@ -68,17 +76,40 @@ public class ConcurrencySeatReservationService {
     /**
      * 좌석 예약 확정 (결제 완료 시)
      */
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public SeatReservation confirmSeatReservation(Long concertId, Integer seatNumber, Long userId) {
-        // 조건부 UPDATE로 안전하게 확정
         int updatedRows = seatReservationRepository.confirmSeatConditionally(concertId, seatNumber, userId);
 
         if (updatedRows == 0) {
             throw new IllegalStateException("확정할 수 있는 예약이 없습니다. (만료되었거나 다른 사용자의 예약)");
         }
 
-        // 확정된 좌석 조회
+        int decreasedRows = concertRepository.decreaseAvailableSeatsAtomically(concertId);
+
+        if (decreasedRows == 0) {
+            throw new IllegalStateException("좌석 감소 실패 - 이미 매진되었거나 존재하지 않는 콘서트");
+        }
+
+        registerSoldOutCheckAfterCommit(concertId);
+
         return seatReservationRepository.findByConcertIdAndSeatNumber(concertId, seatNumber)
                 .orElseThrow(() -> new IllegalStateException("확정된 좌석을 조회할 수 없습니다."));
+    }
+    private void registerSoldOutCheckAfterCommit(Long concertId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                log.info("트랜잭션 커밋 후 콘서트 매진 체크 - concertId: {}", concertId);
+                            } catch (Exception e) {
+                                log.error("매진 체크 실패 - concertId: {}", concertId, e);
+                            }
+                        }
+                    }
+            );
+        }
     }
 }

@@ -41,4 +41,6 @@ public interface ConcertRepository {
     boolean existsById(Long id);
 
     long count();
+
+    int decreaseAvailableSeatsAtomically(Long concertId);
 }
