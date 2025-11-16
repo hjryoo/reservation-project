@@ -1,6 +1,7 @@
 package kr.hhplus.be.server.integration;
 
 import kr.hhplus.be.server.application.service.*;
+import kr.hhplus.be.server.config.TestEventConfig;
 import kr.hhplus.be.server.config.TestPaymentConfig;
 import kr.hhplus.be.server.domain.model.*;
 import kr.hhplus.be.server.domain.port.out.PaymentGateway;
@@ -25,7 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-@Import(TestPaymentConfig.class)
+@Import({TestPaymentConfig.class, TestEventConfig.class})
 @Transactional
 public class ConcertReservationFlowIntegrationTest {
 

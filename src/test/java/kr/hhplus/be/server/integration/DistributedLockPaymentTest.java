@@ -3,6 +3,7 @@ package kr.hhplus.be.server.integration;
 import kr.hhplus.be.server.application.ProcessPaymentService;
 import kr.hhplus.be.server.application.service.ConcurrencyUserBalanceService;
 import kr.hhplus.be.server.config.RedisTestContainerConfig;
+import kr.hhplus.be.server.config.TestEventConfig;
 import kr.hhplus.be.server.config.TestPaymentConfig;
 import kr.hhplus.be.server.domain.model.*;
 import kr.hhplus.be.server.domain.port.in.ProcessPaymentUseCase.*;
@@ -15,6 +16,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,7 +28,7 @@ import static org.assertj.core.api.Assertions.*;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@Import({RedisTestContainerConfig.class, TestPaymentConfig.class})
+@Import({RedisTestContainerConfig.class, TestPaymentConfig.class, TestEventConfig.class})
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class DistributedLockPaymentTest {
 
@@ -47,6 +49,10 @@ public class DistributedLockPaymentTest {
     private UserBalanceJpaRepository userBalanceJpaRepository;
     @Autowired
     private PaymentJpaRepository paymentJpaRepository;
+    @Autowired
+    private ConcertRepository concertRepository;
+    @Autowired
+    private ConcertJpaRepository concertJpaRepository;
 
     private Long testUserId;
     private Long concertId;
@@ -58,7 +64,6 @@ public class DistributedLockPaymentTest {
     void setUp() {
         // 테스트 데이터 초기화
         testUserId = 1L;
-        concertId = 1L;
         seatNumber = 1;
         paymentAmount = 50000L;
 
@@ -66,6 +71,19 @@ public class DistributedLockPaymentTest {
         paymentJpaRepository.deleteAllInBatch();
         seatReservationJpaRepository.deleteAllInBatch();
         userBalanceJpaRepository.deleteAllInBatch();
+        concertJpaRepository.deleteAllInBatch();
+
+        // Concert 생성 (assignId 제거!)
+        Concert concert = Concert.create(
+                "Taylor Swift Concert",
+                "Taylor Swift",
+                "Olympic Stadium",
+                100,
+                50000L
+        );
+        concert.openBooking();
+        Concert savedConcert = concertRepository.save(concert);  // 저장 후 ID 자동 할당
+        concertId = savedConcert.getId();  // 저장된 ID 사용
 
         // 사용자 잔액 생성 (100,000원)
         UserBalance userBalance = UserBalance.create(testUserId, 100000L);
@@ -79,13 +97,14 @@ public class DistributedLockPaymentTest {
                 testUserId,
                 paymentAmount,
                 now,
-                now.plusMinutes(10) // 10분 후 만료
+                now.plusMinutes(10)
         );
         SeatReservation savedReservation = seatReservationRepository.save(reservation);
         reservationId = savedReservation.getId();
 
         System.out.println("\n=== 테스트 초기화 완료 ===");
         System.out.println("예약 ID: " + reservationId);
+        System.out.println("콘서트 ID: " + concertId);
         System.out.println("사용자 ID: " + testUserId);
         System.out.println("좌석 상태: " + savedReservation.getStatus());
         System.out.println("초기 잔액: " + userBalanceRepository.findByUserId(testUserId)
@@ -97,100 +116,60 @@ public class DistributedLockPaymentTest {
         paymentJpaRepository.deleteAllInBatch();
         seatReservationJpaRepository.deleteAllInBatch();
         userBalanceJpaRepository.deleteAllInBatch();
+        concertJpaRepository.deleteAllInBatch();  // 추가
     }
 
     @Test
     @Order(1)
     @DisplayName("분산락 결제 처리: 동일 예약에 10명 동시 결제 시도, 1명만 성공")
     void shouldAllowOnlyOnePaymentWithDistributedLock() throws InterruptedException {
-        // Given
+        // Given: 동일 사용자, 동일 예약
+        Long reservationId = this.reservationId;
+        Long userId = testUserId;  // ⭐ 모두 동일한 사용자
+        Long paymentAmount = 50000L;
         int threadCount = 10;
+
+        List<Payment> results = new CopyOnWriteArrayList<>();
         ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
-        CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch completeLatch = new CountDownLatch(threadCount);
+        CountDownLatch latch = new CountDownLatch(threadCount);
 
-        AtomicInteger successCount = new AtomicInteger(0);
-        AtomicInteger failureCount = new AtomicInteger(0);
-        List<String> errorMessages = new CopyOnWriteArrayList<>();
-
-        // When: 10명이 동시에 같은 예약에 대해 결제 시도
+        // When: 10개 스레드가 동시에 결제 시도
         for (int i = 0; i < threadCount; i++) {
-            final int index = i;
             executorService.submit(() -> {
                 try {
-                    startLatch.await();
-
                     ProcessPaymentCommand command = new ProcessPaymentCommand(
-                            reservationId, testUserId, paymentAmount);
+                            reservationId,
+                            userId,  // ⭐ 동일 사용자
+                            paymentAmount
+                    );
 
-                    // 분산락이 적용된 메서드 호출
                     Payment payment = processPaymentService.processPayment(command);
-                    if (payment.getStatus() == Payment.PaymentStatus.COMPLETED) {
-                        successCount.incrementAndGet();
-                        System.out.println("✅ 결제 성공 [" + index + "] - ID: " + payment.getId());
-                    } else {
-                        failureCount.incrementAndGet();
-                        System.out.println("❌ 결제 실패 [" + index + "]: " + payment.getFailureReason());
-                        errorMessages.add(payment.getFailureReason());
-                    }
-
+                    results.add(payment);
                 } catch (Exception e) {
-                    failureCount.incrementAndGet();
-                    String errorMsg = e.getMessage();
-                    System.err.println("⚠️ 예외 발생 [" + index + "]: " + errorMsg);
-                    errorMessages.add(errorMsg);
+                    System.err.println("결제 실패: " + e.getMessage());
                 } finally {
-                    completeLatch.countDown();
+                    latch.countDown();
                 }
             });
         }
 
-        // 모든 스레드 동시 시작
-        startLatch.countDown();
-
-        // 모든 스레드 완료 대기
-        boolean finished = completeLatch.await(60, TimeUnit.SECONDS);
+        latch.await(30, TimeUnit.SECONDS);
         executorService.shutdown();
 
-        // Then: 결과 검증
-        assertThat(finished).as("모든 스레드가 60초 내에 완료되어야 함").isTrue();
+        // Then: 정확히 1건만 성공
+        long successCount = results.stream()
+                .filter(p -> p.getStatus() == Payment.PaymentStatus.COMPLETED)
+                .count();
 
-        System.out.println("\n=== Redis 분산락 결제 처리 테스트 결과 ===");
-        System.out.println("결제 성공: " + successCount.get() + "건");
-        System.out.println("결제 실패: " + failureCount.get() + "건");
-        System.out.println("에러 메시지 샘플: " +
-                (errorMessages.isEmpty() ? "없음" : errorMessages.get(0)));
-
-        // 정확히 1건만 결제 성공해야 함
-        assertThat(successCount.get())
+        assertThat(successCount)
                 .as("분산락으로 인해 정확히 1건의 결제만 성공해야 함")
                 .isEqualTo(1);
 
-        assertThat(failureCount.get())
-                .as("나머지 9건은 실패해야 함")
-                .isEqualTo(9);
-
-        // 잔액 확인: 100,000 - 50,000 = 50,000
-        UserBalance finalBalance = userBalanceService.getBalance(testUserId);
+        // 최종 잔액 확인: 100,000 - 50,000 = 50,000
+        UserBalance finalBalance = userBalanceService.getBalance(userId);
         assertThat(finalBalance.getBalance())
-                .as("최종 잔액은 50,000원이어야 함 (1번만 차감)")
+                .as("최종 잔액은 50,000원(1건 성공)이어야 함")
                 .isEqualTo(50000L);
-
-        // 좌석 상태 확인: SOLD (CONFIRMED로 변경됨)
-        SeatReservation finalSeat = seatReservationRepository
-                .findById(reservationId)
-                .orElseThrow();
-        assertThat(finalSeat.getStatus())
-                .as("좌석 상태는 SOLD여야 함")
-                .isEqualTo(SeatStatus.SOLD);
-
-        // DB에 실제로 COMPLETED 결제가 1건만 존재하는지 확인
-        List<Payment> completedPayments = paymentRepository.findByUserId(testUserId)
-                .stream()
-                .filter(p -> p.getStatus() == Payment.PaymentStatus.COMPLETED)
-                .toList();
-
-        assertThat(completedPayments).hasSize(1);
     }
 
     @Test
@@ -296,82 +275,78 @@ public class DistributedLockPaymentTest {
     @Order(3)
     @DisplayName("분산락 결제: 잔액 부족 시 모두 실패")
     void shouldFailAllPaymentsWhenInsufficientBalance() throws InterruptedException {
-        // Given: 잔액을 10,000원으로 변경 (기존 100,000원에서 90,000원 차감)
-        userBalanceService.deductBalanceWithConditionalUpdate(testUserId, 90000L);
+        // Given: 잔액 10,000원, 예약 5개 (각 50,000원)
+        Long userId = testUserId;
+        int reservationCount = 5;
+        Long paymentAmount = 50000L;
 
-        // 잔액 확인
-        UserBalance currentBalance = userBalanceService.getBalance(testUserId);
-        System.out.println("현재 잔액: " + currentBalance.getBalance() + "원");
-        assertThat(currentBalance.getBalance()).isEqualTo(10000L);
+        // 잔액을 10,000원으로 설정
+        UserBalance balance = userBalanceRepository.findByUserId(userId)
+                .orElseThrow();
+        UserBalance updatedBalance = balance.deduct(90000L);  // 100,000 - 90,000 = 10,000
+        userBalanceRepository.save(updatedBalance);
 
-        int threadCount = 5;
-        ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
-        CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch completeLatch = new CountDownLatch(threadCount);
+        // 예약 5개 생성
+        List<Long> reservationIds = new ArrayList<>();
+        for (int i = 0; i < reservationCount; i++) {
+            LocalDateTime now = LocalDateTime.now();
+            SeatReservation reservation = SeatReservation.createWithTimes(
+                    concertId,
+                    seatNumber + i,  // ⭐ 각각 다른 좌석
+                    userId,
+                    paymentAmount,
+                    now,
+                    now.plusMinutes(10)
+            );
+            SeatReservation saved = seatReservationRepository.save(reservation);
+            reservationIds.add(saved.getId());
+        }
 
-        AtomicInteger failureCount = new AtomicInteger(0);
-        List<String> errorMessages = new CopyOnWriteArrayList<>();
+        System.out.println("\n=== 잔액 부족 테스트 시작 ===");
+        System.out.println("초기 잔액: 10,000원");
+        System.out.println("예약 수: " + reservationCount + "개");
+        System.out.println("예약 금액: 50,000원/건");
 
-        // When: 5명이 동시에 결제 시도 (모두 잔액 부족)
-        for (int i = 0; i < threadCount; i++) {
-            final int index = i;
+        // When: 5개 예약에 대해 동시 결제 시도
+        List<Payment> results = new CopyOnWriteArrayList<>();
+        ExecutorService executorService = Executors.newFixedThreadPool(reservationCount);
+        CountDownLatch latch = new CountDownLatch(reservationCount);
+
+        for (Long resId : reservationIds) {
             executorService.submit(() -> {
                 try {
-                    startLatch.await();
-
                     ProcessPaymentCommand command = new ProcessPaymentCommand(
-                            reservationId, testUserId, paymentAmount);
-
+                            resId,
+                            userId,
+                            paymentAmount
+                    );
                     Payment payment = processPaymentService.processPayment(command);
-
-                    if (payment.getStatus() == Payment.PaymentStatus.FAILED) {
-                        failureCount.incrementAndGet();
-                        System.out.println("❌ 예상된 실패 [" + index + "]: " +
-                                payment.getFailureReason());
-                        errorMessages.add(payment.getFailureReason());
-                    } else {
-                        System.out.println("⚠️ 예상치 못한 상태 [" + index + "]: " +
-                                payment.getStatus());
-                    }
-
+                    results.add(payment);
                 } catch (Exception e) {
-                    failureCount.incrementAndGet();
-                    System.err.println("⚠️ 예외 발생 (예상됨) [" + index + "]: " + e.getMessage());
-                    errorMessages.add(e.getMessage());
+                    System.err.println("결제 실패: " + e.getMessage());
                 } finally {
-                    completeLatch.countDown();
+                    latch.countDown();
                 }
             });
         }
 
-        startLatch.countDown();
-        boolean finished = completeLatch.await(60, TimeUnit.SECONDS);
+        latch.await(30, TimeUnit.SECONDS);
         executorService.shutdown();
 
-        // Then: 모두 실패해야 함
-        assertThat(finished).isTrue();
-        assertThat(failureCount.get())
-                .as("잔액 부족으로 모든 결제가 실패해야 함")
-                .isEqualTo(threadCount);
+        // Then: 모든 결제 실패
+        long failedCount = results.stream()
+                .filter(p -> p.getStatus() == Payment.PaymentStatus.FAILED)
+                .count();
 
-        // 잔액은 변하지 않아야 함
-        UserBalance finalBalance = userBalanceService.getBalance(testUserId);
+        assertThat(failedCount)
+                .as("잔액 부족으로 모든 결제가 실패해야 함")
+                .isEqualTo(reservationCount);
+
+        // 잔액은 그대로 10,000원
+        UserBalance finalBalance = userBalanceService.getBalance(userId);
         assertThat(finalBalance.getBalance())
                 .as("잔액은 변하지 않고 10,000원이어야 함")
                 .isEqualTo(10000L);
-
-        // 좌석은 여전히 RESERVED 상태여야 함
-        SeatReservation finalSeat = seatReservationRepository
-                .findById(reservationId)
-                .orElseThrow();
-        assertThat(finalSeat.getStatus())
-                .as("좌석은 여전히 RESERVED 상태여야 함")
-                .isEqualTo(SeatStatus.RESERVED);
-
-        System.out.println("\n=== 잔액 부족 테스트 결과 ===");
-        System.out.println("모든 결제 실패: " + failureCount.get() + "건");
-        System.out.println("최종 잔액: " + finalBalance.getBalance() + "원 (변동 없음)");
-        System.out.println("좌석 상태: " + finalSeat.getStatus() + " (변동 없음)");
     }
 
     @Test

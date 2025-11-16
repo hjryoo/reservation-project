@@ -1,6 +1,7 @@
 package kr.hhplus.be.server.integration;
 
 import kr.hhplus.be.server.config.RedisTestContainerConfig;
+import kr.hhplus.be.server.config.TestEventConfig;
 import kr.hhplus.be.server.integration.helper.TestLockService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,7 @@ import static org.assertj.core.api.Assertions.*;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@Import(RedisTestContainerConfig.class)
+@Import({RedisTestContainerConfig.class, TestEventConfig.class})
 public class DistributedLockBasicTest {
 
     @Autowired

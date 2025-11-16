@@ -2,10 +2,12 @@ package kr.hhplus.be.server.integration;
 
 import kr.hhplus.be.server.application.service.ConcertRankingService;
 import kr.hhplus.be.server.config.RedisTestContainerConfig;
+import kr.hhplus.be.server.config.TestEventConfig;
 import kr.hhplus.be.server.domain.model.Concert;
 import kr.hhplus.be.server.domain.repository.ConcertRepository;
 import kr.hhplus.be.server.infrastructure.persistence.SpringDataConcertRepository;
 import org.junit.jupiter.api.*;
+import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,7 +24,7 @@ import static org.assertj.core.api.Assertions.*;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@Import(RedisTestContainerConfig.class)
+@Import({RedisTestContainerConfig.class, TestEventConfig.class})
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class ConcertRankingIntegrationTest {
 
@@ -42,7 +44,10 @@ public class ConcertRankingIntegrationTest {
     @BeforeEach
     void setUp() {
         jpaRepository.deleteAll();
-        redisTemplate.getConnectionFactory().getConnection().flushAll();
+        redisTemplate.execute((RedisConnection connection) -> {
+            connection.serverCommands().flushAll();
+            return null;
+        });
     }
 
     @AfterEach
