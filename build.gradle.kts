@@ -69,6 +69,13 @@ dependencies {
 		exclude(group = "org.slf4j", module = "slf4j-simple")
         testImplementation("org.awaitility:awaitility:4.2.0")
 	}
+
+    // [NEW] Kafka
+    implementation("org.springframework.kafka:spring-kafka")
+
+    // [NEW] Test for Kafka
+    testImplementation("org.springframework.kafka:spring-kafka-test")
+    testImplementation("org.testcontainers:kafka")
 }
 
 tasks.withType<Test> {
