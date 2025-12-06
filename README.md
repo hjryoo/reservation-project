@@ -55,4 +55,5 @@
 - [동시성 제어 테스트](docs/concurrency.md)
 - [캐싱 보고서](docs/CacheReport.md)
 - [매진 랭킹 설계](docs/soldout_structure.md)
+- [Kafka](docs/kafka.md)
 ---
