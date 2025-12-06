@@ -98,7 +98,7 @@ spring:
 
   # Test 환경 Kafka (Embedded Kafka용, 실제 연결 X)
   kafka:
-    bootstrap-servers: ${spring.embedded.kafka.brokers} # TestContainer 사용 시 동적 할당
+    bootstrap-servers: localhost:9092
     consumer:
       group-id: test-group
       auto-offset-reset: earliest
