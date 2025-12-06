@@ -2,6 +2,7 @@ package kr.hhplus.be.server.integration;
 
 import kr.hhplus.be.server.application.service.ConcurrencyUserBalanceService;
 import kr.hhplus.be.server.config.RedisTestContainerConfig;
+import kr.hhplus.be.server.config.TestEventConfig;
 import kr.hhplus.be.server.domain.model.UserBalance;
 import kr.hhplus.be.server.domain.repository.UserBalanceRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -27,7 +28,7 @@ import static org.assertj.core.api.Assertions.*;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@Import(RedisTestContainerConfig.class)
+@Import({RedisTestContainerConfig.class, TestEventConfig.class})
 public class BalanceConcurrencyTest {
 
     @Autowired

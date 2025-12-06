@@ -3,6 +3,7 @@ package kr.hhplus.be.server.integration;
 import kr.hhplus.be.server.application.service.ConcertRankingService;
 import kr.hhplus.be.server.application.service.SeatReservationService;
 import kr.hhplus.be.server.config.RedisTestContainerConfig;
+import kr.hhplus.be.server.config.TestEventConfig;
 import kr.hhplus.be.server.domain.model.Concert;
 import kr.hhplus.be.server.domain.model.SeatReservation;
 import kr.hhplus.be.server.domain.repository.ConcertRepository;
@@ -25,7 +26,7 @@ import static org.assertj.core.api.Assertions.*;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@Import(RedisTestContainerConfig.class)
+@Import({RedisTestContainerConfig.class, TestEventConfig.class})
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class SeatReservationWithRankingTest {
 

@@ -1,6 +1,7 @@
 package kr.hhplus.be.server.integration;
 import kr.hhplus.be.server.application.service.SeatReservationService;
 import kr.hhplus.be.server.config.RedisTestContainerConfig;
+import kr.hhplus.be.server.config.TestEventConfig;
 import kr.hhplus.be.server.domain.model.*;
 import kr.hhplus.be.server.domain.repository.*;
 import kr.hhplus.be.server.domain.port.out.UserRepository;
@@ -27,7 +28,7 @@ import static org.assertj.core.api.Assertions.*;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@Import(RedisTestContainerConfig.class)
+@Import({RedisTestContainerConfig.class, TestEventConfig.class})
 public class DistributedLockSeatReservationTest {
 
     @Autowired private SeatReservationService seatReservationService;

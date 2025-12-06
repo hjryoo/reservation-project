@@ -1,7 +1,12 @@
 package kr.hhplus.be.server.domain.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.time.LocalDateTime;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SeatReservation {
     private Long id;
     private final Long concertId;
@@ -11,6 +16,10 @@ public class SeatReservation {
     private LocalDateTime reservedAt;
     private LocalDateTime expiresAt;
     private final Long price;
+
+    // 추가된 필드
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
     private SeatReservation(Long concertId, Integer seatNumber, Long userId,
                             SeatStatus status, LocalDateTime reservedAt,
@@ -22,22 +31,22 @@ public class SeatReservation {
         this.reservedAt = reservedAt;
         this.expiresAt = expiresAt;
         this.price = price;
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
     }
 
-    // 팩토리 메서드 - 사용 가능한 좌석 생성
     public static SeatReservation createAvailableSeat(Long concertId, Integer seatNumber, Long price) {
         return new SeatReservation(
                 concertId,
                 seatNumber,
-                null, // userId는 null
+                null,
                 SeatStatus.AVAILABLE,
-                null, // reservedAt는 null
-                null, // expiresAt는 null
+                null,
+                null,
                 price
         );
     }
 
-    // 팩토리 메서드 - 임시 예약 생성 (5분간)
     public static SeatReservation createTemporaryReservation(Long concertId, Integer seatNumber,
                                                              Long userId, Long price) {
         LocalDateTime now = LocalDateTime.now();
@@ -47,12 +56,11 @@ public class SeatReservation {
                 userId,
                 SeatStatus.RESERVED,
                 now,
-                now.plusMinutes(5), // 5분 후 만료
+                now.plusMinutes(5),
                 price
         );
     }
 
-    // 팩토리 메서드 - 확정 예약 (결제 완료)
     public static SeatReservation createConfirmedReservation(Long concertId, Integer seatNumber,
                                                              Long userId, Long price) {
         LocalDateTime now = LocalDateTime.now();
@@ -62,7 +70,7 @@ public class SeatReservation {
                 userId,
                 SeatStatus.SOLD,
                 now,
-                null, // 확정 예약은 만료 없음
+                null,
                 price
         );
     }
@@ -81,7 +89,34 @@ public class SeatReservation {
         );
     }
 
-    // 비즈니스 로직 - 예약 만료 여부
+    /**
+     * Jackson 역직렬화를 위한 생성자
+     */
+    @JsonCreator
+    private SeatReservation(
+            @JsonProperty("id") Long id,
+            @JsonProperty("concertId") Long concertId,
+            @JsonProperty("seatNumber") Integer seatNumber,
+            @JsonProperty("userId") Long userId,
+            @JsonProperty("price") Long price,
+            @JsonProperty("status") SeatStatus status,
+            @JsonProperty("reservedAt") LocalDateTime reservedAt,
+            @JsonProperty("expiresAt") LocalDateTime expiresAt,
+            @JsonProperty("createdAt") LocalDateTime createdAt,
+            @JsonProperty("updatedAt") LocalDateTime updatedAt
+    ) {
+        this.id = id;
+        this.concertId = concertId;
+        this.seatNumber = seatNumber;
+        this.userId = userId;
+        this.price = price;
+        this.status = status;
+        this.reservedAt = reservedAt;
+        this.expiresAt = expiresAt;
+        this.createdAt = createdAt != null ? createdAt : LocalDateTime.now();
+        this.updatedAt = updatedAt != null ? updatedAt : LocalDateTime.now();
+    }
+
     public boolean isExpired() {
         if (status != SeatStatus.RESERVED || expiresAt == null) {
             return false;
@@ -89,12 +124,10 @@ public class SeatReservation {
         return LocalDateTime.now().isAfter(expiresAt);
     }
 
-    // 비즈니스 로직 - 예약 가능 여부
     public boolean isAvailable() {
         return status == SeatStatus.AVAILABLE || isExpired();
     }
 
-    // 비즈니스 로직 - 특정 사용자가 예약 중인지 확인
     public boolean isReservedBy(Long userId) {
         return status == SeatStatus.RESERVED &&
                 this.userId != null &&
@@ -102,16 +135,19 @@ public class SeatReservation {
                 !isExpired();
     }
 
-    // 비즈니스 로직 - 결제 가능 여부
     public boolean canBeConfirmed(Long userId) {
         return this.status == SeatStatus.RESERVED &&
                 this.userId.equals(userId) &&
                 (this.expiresAt != null && this.expiresAt.isAfter(LocalDateTime.now()));
     }
 
-    // ID 할당 (Infrastructure 레이어에서만 사용)
     public void assignId(Long id) {
         this.id = id;
+    }
+
+    public void assignTimestamps(LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
     }
 
     public void reserveTemporarily(Long userId) {
@@ -121,7 +157,8 @@ public class SeatReservation {
         this.status = SeatStatus.RESERVED;
         this.userId = userId;
         this.reservedAt = LocalDateTime.now();
-        this.expiresAt = this.reservedAt.plusMinutes(5); // 예: 5분 후 만료
+        this.expiresAt = this.reservedAt.plusMinutes(5);
+        this.updatedAt = LocalDateTime.now();
     }
 
     public void reserve(Long userId) {
@@ -130,7 +167,8 @@ public class SeatReservation {
         }
         this.status = SeatStatus.RESERVED;
         this.userId = userId;
-        this.expiresAt = LocalDateTime.now().plusMinutes(5); // 5분 후 만료
+        this.expiresAt = LocalDateTime.now().plusMinutes(5);
+        this.updatedAt = LocalDateTime.now();
     }
 
     public void confirm() {
@@ -139,15 +177,16 @@ public class SeatReservation {
         }
         this.status = SeatStatus.SOLD;
         this.expiresAt = null;
+        this.updatedAt = LocalDateTime.now();
     }
 
     public void release() {
         this.status = SeatStatus.AVAILABLE;
         this.userId = null;
         this.expiresAt = null;
+        this.updatedAt = LocalDateTime.now();
     }
 
-    // 테스트를 위해 만료 시간을 수동으로 설정하는 메서드 (선택 사항)
     public void forceExpire(LocalDateTime time) {
         this.expiresAt = time;
     }
@@ -161,5 +200,7 @@ public class SeatReservation {
     public LocalDateTime getReservedAt() { return reservedAt; }
     public LocalDateTime getExpiresAt() { return expiresAt; }
     public Long getPrice() { return price; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
 }
 
