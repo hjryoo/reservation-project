@@ -1,5 +1,10 @@
 package kr.hhplus.be.server.domain.event;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
 import java.time.LocalDateTime;
 
 /**
@@ -8,16 +13,19 @@ import java.time.LocalDateTime;
  * 발행 시점: 결제 완료 + 좌석 확정 후
  * 목적: 데이터 플랫폼에 예약 정보 전송
  */
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class ReservationCompletedEvent {
-
-    private final Long reservationId;
-    private final Long concertId;
-    private final Long userId;
-    private final Integer seatNumber;
-    private final Long amount;
-    private final String concertTitle;
-    private final String transactionId;
-    private final LocalDateTime completedAt;
+    private Long reservationId;
+    private Long concertId;
+    private Long userId;
+    private Integer seatNumber;
+    private Long amount;
+    private String concertTitle;
+    private String transactionId;
+    private LocalDateTime completedAt;
 
     public ReservationCompletedEvent(Long reservationId, Long concertId, Long userId,
                                      Integer seatNumber, Long amount, String concertTitle,
