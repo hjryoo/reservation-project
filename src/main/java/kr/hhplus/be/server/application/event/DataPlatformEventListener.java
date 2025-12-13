@@ -1,13 +1,14 @@
 package kr.hhplus.be.server.application.event;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import kr.hhplus.be.server.domain.event.ReservationCompletedEvent;
 import kr.hhplus.be.server.domain.model.FailedEvent;
 import kr.hhplus.be.server.domain.repository.FailedEventRepository;
-import kr.hhplus.be.server.infrastructure.client.DataPlatformClient;
 import kr.hhplus.be.server.infrastructure.client.DataPlatformPayload;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
@@ -16,43 +17,57 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-/**
- * 데이터 플랫폼 이벤트 리스너
- *
- * 비동기로 데이터 플랫폼에 예약 정보 전송
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class DataPlatformEventListener {
 
-    private final DataPlatformClient dataPlatformClient;
+    private final KafkaTemplate<String, String> kafkaTemplate;
     private final FailedEventRepository failedEventRepository;
     private final ObjectMapper objectMapper;
 
-    @Async("eventAsyncExecutor") // 별도 스레드에서 실행
+    // 토픽 이름 상수 정의
+    private static final String TOPIC_RESERVATION = "concert.reservation.completed";
+
+    @Async("eventAsyncExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Retryable(
-            retryFor = { Exception.class }, // 모든 예외에 대해 재시도 (필요시 구체화)
+            retryFor = { Exception.class },
             maxAttempts = 3,
             backoff = @Backoff(delay = 2000, multiplier = 2)
     )
     public void handleReservationCompleted(ReservationCompletedEvent event) {
-        log.info("[DataPlatform] 전송 시작 - reservationId: {}", event.getReservationId());
+        try {
+            log.info("[Kafka Producer] 예약 정보 발행 시작 - reservationId: {}", event.getReservationId());
 
-        DataPlatformPayload payload = DataPlatformPayload.from(event);
-        dataPlatformClient.sendReservationData(payload);
+            // 1. Payload 생성 (기존 로직 활용)
+            DataPlatformPayload payload = DataPlatformPayload.from(event);
 
-        log.info("[DataPlatform] 전송 성공 - reservationId: {}", event.getReservationId());
+            // 2. JSON 변환
+            String jsonPayload = objectMapper.writeValueAsString(payload);
+
+            // 3. Kafka 발행 (Key: reservationId, Value: JSON)
+            // Key를 지정해야 동일 예약에 대한 이벤트가 동일 파티션으로 가서 순서가 보장됨
+            kafkaTemplate.send(TOPIC_RESERVATION, String.valueOf(event.getReservationId()), jsonPayload);
+
+            log.info("[Kafka Producer] 발행 성공 - topic: {}, reservationId: {}", TOPIC_RESERVATION, event.getReservationId());
+
+        } catch (JsonProcessingException e) {
+            log.error("[Kafka Producer] JSON 변환 오류 - reservationId: {}", event.getReservationId(), e);
+            throw new RuntimeException("JSON conversion failed", e);
+        } catch (Exception e) {
+            log.error("[Kafka Producer] 발행 실패 - reservationId: {}", event.getReservationId(), e);
+            throw e; // Retryable 발동을 위해 예외 던짐
+        }
     }
 
+    // 3회 실패 시 DB에 저장 (Fallback)
     @Recover
     public void recover(Exception e, ReservationCompletedEvent event) {
-        log.error("[DataPlatform] 3회 재시도 실패 - reservationId: {}, error: {}",
-                event.getReservationId(), e.getMessage());
+        log.error("[Kafka Producer] 최종 전송 실패 (Recover) - reservationId: {}", event.getReservationId());
 
         try {
-            String payloadJson = objectMapper.writeValueAsString(event);
+            String payloadJson = objectMapper.writeValueAsString(DataPlatformPayload.from(event));
 
             FailedEvent failedEvent = FailedEvent.create(
                     "ReservationCompleted",
@@ -62,10 +77,10 @@ public class DataPlatformEventListener {
             );
 
             failedEventRepository.save(failedEvent);
-            log.info("[FailedEvent] 실패 이벤트 저장 완료 - reservationId: {}", event.getReservationId());
+            log.info("[FailedEvent] DB 백업 완료 - reservationId: {}", event.getReservationId());
 
         } catch (Exception saveEx) {
-            log.error("[CRITICAL] 실패 이벤트 저장마저 실패 - reservationId: {}", event.getReservationId(), saveEx);
+            log.error("[CRITICAL] DB 백업 실패 - reservationId: {}", event.getReservationId(), saveEx);
         }
     }
 }

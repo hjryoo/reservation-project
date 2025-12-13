@@ -45,6 +45,28 @@ spring:
           max-idle: 10
           min-idle: 2
 
+  # Kafka 설정
+  kafka:
+    bootstrap-servers: localhost:9092,localhost:9093,localhost:9094
+    producer:
+      # 메시지 발송 실패 시 재시도 횟수
+      retries: 3
+      # 데이터를 보내기 위해 기다리는 시간 (배치 처리)
+      linger-ms: 10
+      # Key, Value 직렬화 설정 (문자열 사용)
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all # 모든 복제본이 받을 때까지 대기 (데이터 안전성 최우선)
+    consumer:
+      # 컨슈머 그룹 ID (서비스 식별자)
+      group-id: hhplus-reservation-group
+      # 가장 처음 offset부터 읽기 (earliest) vs 최신 것만 읽기 (latest)
+      auto-offset-reset: earliest
+      # Key, Value 역직렬화 설정
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+
 ---
 # ######################################################
 # # test 프로필 설정
@@ -73,6 +95,13 @@ spring:
     console:
       enabled: true
       path: /h2-console
+
+  # Test 환경 Kafka (Embedded Kafka용, 실제 연결 X)
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: test-group
+      auto-offset-reset: earliest
 
 logging:
   level:
