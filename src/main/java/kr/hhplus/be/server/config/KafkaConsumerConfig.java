@@ -8,7 +8,10 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.FixedBackOff;
 
@@ -38,24 +41,31 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(config);
     }
 
+    /**
+     * 에러 핸들러 설정 (Retry + DLQ)
+     */
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
+    public CommonErrorHandler commonErrorHandler(KafkaTemplate<String, String> kafkaTemplate) {
+        // 실패 시 '원본토픽.DLQ'로 전송
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(kafkaTemplate);
+
+        // 1초 간격 3회 재시도 후 DLQ 전송
+        return new DefaultErrorHandler(recoverer, new FixedBackOff(1000L, 3L));
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
+            CommonErrorHandler commonErrorHandler) {
+
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
 
         factory.setConsumerFactory(consumerFactory());
-
-        // [동시성 설정]
         factory.setConcurrency(3);
-
-        // [안정성 설정]
-        // 리스너가 정상 종료되었을 때만 커밋 (AckMode.MANUAL)
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
 
-        // [에러 핸들링]
-        factory.setCommonErrorHandler(new DefaultErrorHandler(
-                new FixedBackOff(1000L, 3L)
-        ));
+        // ErrorHandler 등록
+        factory.setCommonErrorHandler(commonErrorHandler);
 
         return factory;
     }
