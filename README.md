@@ -56,4 +56,6 @@
 - [캐싱 보고서](docs/CacheReport.md)
 - [매진 랭킹 설계](docs/soldout_structure.md)
 - [Kafka](docs/kafka.md)
+- [부하테스트](docs/loadtestplan.md)
+- [부하테스트 결과](docs/test-result.md)
 ---
